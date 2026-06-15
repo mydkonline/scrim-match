@@ -1,9 +1,17 @@
 use dioxus::prelude::*;
 use gloo_timers::future::TimeoutFuture;
-use shared::{Listing, Squad, Team};
+use shared::{ClientMsg, Listing, Squad, Team};
 
-use crate::state::{AppCtx, InboxItem, Screen};
+use crate::state::{AppCtx, InboxItem, Screen, SentReq};
 use crate::views::{flag_for, initials};
+
+pub fn gen_code(seed: &str) -> String {
+    let mut h: u32 = 5381;
+    for b in seed.bytes() {
+        h = h.wrapping_mul(33).wrapping_add(b as u32);
+    }
+    format!("{:06}", h % 1_000_000)
+}
 
 fn listing_of(t: &Team) -> Listing {
     Listing::from_team(t, false)
@@ -179,6 +187,18 @@ fn SquadPick(squad: Squad, current: Squad) -> Element {
 fn SearchingView(listings: Vec<Listing>) -> Element {
     let ctx = use_context::<AppCtx>();
     let found = !listings.is_empty();
+    let mut fr = use_signal(|| Option::<String>::None);
+    let cur = fr.read().clone();
+    // 리스트에 존재하는 지역 목록
+    let mut regions: Vec<String> = Vec::new();
+    for l in listings.iter() {
+        if !regions.contains(&l.region) { regions.push(l.region.clone()); }
+    }
+    let shown: Vec<Listing> = listings
+        .iter()
+        .filter(|l| cur.as_ref().map_or(true, |r| &l.region == r))
+        .cloned()
+        .collect();
     rsx! {
         div { class: "search-wrap",
             if !found {
@@ -201,9 +221,26 @@ fn SearchingView(listings: Vec<Listing>) -> Element {
                     div { class: "connect-bar", div { class: "connect-bar-fill" } }
                 }
                 div { class: "listing-reveal",
-                    p { class: "caption center", style: "margin-bottom:8px;", "🌐 연결됨 · 스크림 가능한 팀 (국가별)" }
+                    p { class: "caption center", style: "margin-bottom:10px;", "🌐 연결됨 · 스크림 가능한 팀 (국가별)" }
+                    // 국가/리그 필터 칩
+                    div { class: "region-chips",
+                        {
+                            let active = cur.is_none();
+                            let cls = if active { "region-chip active" } else { "region-chip" };
+                            rsx! { button { class: "{cls}", onclick: move |_| fr.set(None), "🌐 전체 {listings.len()}" } }
+                        }
+                        for reg in regions.iter() {
+                            {
+                                let r = reg.clone();
+                                let n = listings.iter().filter(|l| &l.region == reg).count();
+                                let active = cur.as_deref() == Some(reg.as_str());
+                                let cls = if active { "region-chip active" } else { "region-chip" };
+                                rsx! { button { key: "{reg}", class: "{cls}", onclick: move |_| fr.set(Some(r.clone())), "{flag_for(reg)} {reg} {n}" } }
+                            }
+                        }
+                    }
                     div { class: "listing-grid",
-                        for l in listings.iter() {
+                        for l in shown.iter() {
                             ListingCard { listing: l.clone() }
                         }
                     }
@@ -219,7 +256,8 @@ fn SearchingView(listings: Vec<Listing>) -> Element {
 fn ListingCard(listing: Listing) -> Element {
     let ctx = use_context::<AppCtx>();
     let flag = flag_for(&listing.region);
-    let applied = ctx.sent.read().iter().any(|l| l.team_id == listing.team_id);
+    let applied = ctx.sent.read().iter().any(|r| r.listing.team_id == listing.team_id);
+    let online = *ctx.online.read();
     rsx! {
         div { class: "listing-card",
             TeamLogo { logo: listing.logo.clone(), tag: listing.tag.clone(), size: 40 }
@@ -235,14 +273,24 @@ fn ListingCard(listing: Listing) -> Element {
                     onclick: {
                         let opp = listing.clone();
                         move |_| {
-                            // 메시지 큐에 전달(실시간 대기 없음). 중복 신청 방지.
-                            let mut s = ctx.sent.read().clone();
-                            if !s.iter().any(|l| l.team_id == opp.team_id) {
-                                s.push(opp.clone());
+                            if ctx.sent.read().iter().any(|r| r.listing.team_id == opp.team_id) { return; }
+                            if online {
+                                // 서버 메시지 큐에 적재 → Applied 로 코드 수신
+                                ctx.send(ClientMsg::ApplyQueue {
+                                    target_team: opp.team_id.clone(),
+                                    date: ctx.scrim_date.read().clone(),
+                                    time: ctx.scrim_time.read().clone(),
+                                    squad: ctx.scrim_squad.read().label().to_string(),
+                                });
+                            } else {
+                                // 오프라인 폴백: 로컬 코드 발급
+                                let code = gen_code(&format!("{}{}", opp.team_id, ctx.scrim_time.read()));
+                                let mut s = ctx.sent.read().clone();
+                                s.push(SentReq { listing: opp.clone(), code: code.clone() });
                                 let mut sent = ctx.sent; sent.set(s);
+                                let mut st = ctx.status;
+                                st.set(format!("신청 완료 — 코드 {} 전달, 상대 수락 대기중", code));
                             }
-                            let mut st = ctx.status;
-                            st.set(format!("신청이 완료되었습니다 — {} 수신함으로 전달됨", opp.name));
                         }
                     },
                     "신청"

@@ -181,6 +181,10 @@ pub enum ClientMsg {
     StopSearch,
     /// 리스트의 특정 팀에게 스크림 신청.
     Invite { target_team: String },
+    /// 상대 팀에게 스크림 신청을 메시지 큐에 적재(상대 수락 대기). 코드 발급됨.
+    ApplyQueue { target_team: String, date: String, time: String, squad: String },
+    /// 발급된 코드로 대기 중인 신청을 수락.
+    AcceptCode { code: String },
     /// 받은 신청 수락.
     Accept { match_id: String },
     /// 받은 신청 거절.
@@ -199,6 +203,8 @@ pub enum ServerMsg {
     Welcome { team: Team },
     /// 현재 내 슬롯에서 스크림 가능한 팀 목록(검색 중 갱신).
     ScrimList { listings: Vec<Listing> },
+    /// 신청이 큐에 적재됨 — 상대에게 전달할 코드 발급.
+    Applied { code: String, to: Listing },
     /// 누군가 나에게 스크림을 신청함.
     InviteIncoming { match_id: String, from: Listing },
     /// 내가 신청을 보냈고 상대 수락 대기 중.

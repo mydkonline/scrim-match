@@ -321,6 +321,14 @@ input, select { font-family: var(--font); }
 .listing-reveal { opacity: 0; animation: reveal-in 0.5s ease 2.7s forwards; }
 @keyframes reveal-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
 
+.region-chips { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-bottom: var(--s-lg); }
+.region-chip {
+  border: 1px solid var(--hairline); border-radius: var(--r-full); background: var(--canvas);
+  padding: 6px 14px; font-size: 13px; font-weight: 500; color: var(--ink-mute); transition: all 0.12s ease;
+}
+.region-chip:hover { border-color: var(--hairline-strong); color: var(--ink); }
+.region-chip.active { border-color: var(--primary); background: rgba(62,207,142,0.1); color: var(--ink); font-weight: 600; }
+
 .listing-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: var(--s-md); margin-top: var(--s-md); text-align: left; }
 .listing-card {
   display: flex; align-items: center; gap: var(--s-md);
@@ -388,6 +396,11 @@ input, select { font-family: var(--font); }
 .msg-search { display: flex; align-items: center; gap: 8px; margin: 6px 16px 8px; padding: 8px 12px; background: var(--canvas-soft); border: 1px solid var(--hairline-cool); border-radius: var(--r-full); }
 .msg-search-ico { font-size: 13px; opacity: 0.6; }
 .msg-search-input { flex: 1; border: none; background: transparent; outline: none; font-size: 14px; color: var(--ink); }
+.code-accept { display: flex; gap: 6px; margin: 0 16px 8px; }
+.code-accept-input { flex: 1; border: 1px solid var(--hairline); border-radius: var(--r-sm); padding: 8px 10px; font-size: 13px; font-family: var(--mono); outline: none; }
+.code-accept-input:focus { border-color: var(--primary); }
+.code-accept .btn { padding: 8px 12px; }
+.code-box { font-family: var(--mono); font-size: 30px; font-weight: 600; letter-spacing: 6px; color: var(--primary-deep); background: var(--canvas-night); color: var(--primary-soft); padding: 14px 24px; border-radius: var(--r-md); margin: 12px 0; }
 .msg-section { font-size: 11px; color: var(--ink-mute-2); padding: 12px 18px 6px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px; }
 .msg-item {
   display: flex; align-items: center; gap: 12px; padding: 11px 16px; cursor: pointer;

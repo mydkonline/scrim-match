@@ -50,6 +50,16 @@ struct MatchRec {
     invitee: String,
 }
 
+/// 코드로 대기 중인 신청(메시지 큐).
+#[derive(Clone)]
+struct Pending {
+    code: String,
+    from: String,
+    to: String,
+    date: String,
+    time: String,
+}
+
 #[derive(Default)]
 struct Inner {
     /// team_id → 그 팀 소켓으로 메시지를 흘려보내는 송신부.
@@ -57,6 +67,8 @@ struct Inner {
     /// 현재 스크림 상대를 찾는 팀들.
     pool: Vec<PoolEntry>,
     matches: HashMap<String, MatchRec>,
+    /// 코드 발급된 대기 신청들.
+    pending: Vec<Pending>,
 }
 
 struct AppState {
@@ -464,6 +476,69 @@ async fn handle_socket(socket: WebSocket, state: Shared) {
                     inner.pool.retain(|q| q.team_id != my_id);
                     broadcast_lists(&state, &inner);
                 }
+            }
+
+            ClientMsg::ApplyQueue { target_team, date, time, squad: _ } => {
+                let Some((my_id, _)) = me.clone() else { continue };
+                let Some(target) = state.find_team(&target_team) else {
+                    let _ = tx.send(ServerMsg::Error { message: "알 수 없는 상대".into() });
+                    continue;
+                };
+                let code = gen_code();
+                let mut inner = state.inner.lock().unwrap();
+                inner.pending.retain(|p| !(p.from == my_id && p.to == target_team));
+                inner.pending.push(Pending {
+                    code: code.clone(),
+                    from: my_id.clone(),
+                    to: target_team.clone(),
+                    date,
+                    time,
+                });
+                let target_live = inner.clients.contains_key(&target_team);
+                send_to(&inner, &my_id, ServerMsg::Applied {
+                    code,
+                    to: Listing::from_team(&target, !target_live),
+                });
+            }
+
+            ClientMsg::AcceptCode { code } => {
+                let Some((my_id, _)) = me.clone() else { continue };
+                let mut inner = state.inner.lock().unwrap();
+                let pos = inner.pending.iter().position(|p| p.code == code);
+                let Some(pos) = pos else {
+                    let _ = tx.send(ServerMsg::Error { message: "코드를 찾을 수 없습니다".into() });
+                    continue;
+                };
+                let p = inner.pending.remove(pos);
+                let game = state.find_team(&p.from).map(|t| t.game).unwrap_or(Game::Lol);
+                let scrim = ScrimMatch {
+                    id: Uuid::new_v4().to_string(),
+                    team_a: p.from.clone(),
+                    team_b: my_id.clone(),
+                    game,
+                    date: p.date.clone(),
+                    time: p.time.clone(),
+                    code: p.code.clone(),
+                    status: MatchStatus::Confirmed,
+                };
+                let my_live = inner.clients.contains_key(&my_id);
+                let from_live = inner.clients.contains_key(&p.from);
+                if let Some(t) = state.find_team(&my_id) {
+                    send_to(&inner, &p.from, ServerMsg::MatchConfirmed {
+                        match_id: scrim.id.clone(),
+                        scrim: scrim.clone(),
+                        opponent: Listing::from_team(&t, !my_live),
+                    });
+                }
+                if let Some(t) = state.find_team(&p.from) {
+                    send_to(&inner, &my_id, ServerMsg::MatchConfirmed {
+                        match_id: scrim.id.clone(),
+                        scrim: scrim.clone(),
+                        opponent: Listing::from_team(&t, !from_live),
+                    });
+                }
+                drop(inner);
+                persist(&state, scrim);
             }
 
             ClientMsg::Invite { target_team } => {

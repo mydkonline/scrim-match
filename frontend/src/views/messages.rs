@@ -1,9 +1,49 @@
 use dioxus::prelude::*;
 use gloo_timers::future::TimeoutFuture;
-use shared::{Listing, MatchStatus, ScrimMatch};
+use shared::{ClientMsg, Listing, MatchStatus, ScrimMatch};
 
 use crate::state::{AppCtx, ChatMsg, Thread};
 use crate::views::{flag_for, TeamLogo};
+
+/// 코드로 로컬 수락(오프라인) — 보낸 신청을 확정 대화로 전환.
+fn accept_by_code_local(ctx: AppCtx, opp: Listing, code: String) {
+    let my_id = ctx.my_team.read().as_ref().map(|t| t.id.clone()).unwrap_or_default();
+    let date = ctx.scrim_date.read().clone();
+    let time = ctx.scrim_time.read().clone();
+    let squad = *ctx.scrim_squad.read();
+    let mid = format!("c-{code}");
+    let scrim = ScrimMatch {
+        id: mid.clone(),
+        team_a: opp.team_id.clone(),
+        team_b: my_id,
+        game: opp.game,
+        date,
+        time,
+        code,
+        status: MatchStatus::Confirmed,
+    };
+    let mut threads = ctx.threads.read().clone();
+    if !threads.iter().any(|t| t.match_id == mid) {
+        threads.push(Thread {
+            match_id: mid.clone(),
+            opponent: opp.clone(),
+            scrim,
+            squad_label: squad.label().to_string(),
+            chat: Vec::new(),
+            unread: 0,
+        });
+        let mut ts = ctx.threads;
+        ts.set(threads);
+    }
+    // 보낸 신청에서 제거
+    let remaining: Vec<_> = ctx.sent.read().clone().into_iter().filter(|r| r.listing.team_id != opp.team_id).collect();
+    let mut s = ctx.sent;
+    s.set(remaining);
+    let mut a = ctx.active;
+    a.set(Some(mid));
+    let mut st = ctx.status;
+    st.set(format!("✅ 수락 완료! vs {}", opp.name));
+}
 
 fn mock_code(seed: &str) -> String {
     let mut h: u32 = 5381;
@@ -62,7 +102,7 @@ pub fn Messages() -> Element {
     let threads: Vec<_> = ctx.threads.read().clone().into_iter()
         .filter(|t| q.is_empty() || t.opponent.name.to_lowercase().contains(&q)).collect();
     let sent: Vec<_> = ctx.sent.read().clone().into_iter()
-        .filter(|l| q.is_empty() || l.name.to_lowercase().contains(&q)).collect();
+        .filter(|r| q.is_empty() || r.listing.name.to_lowercase().contains(&q)).collect();
     let active = ctx.active.read().clone();
     let total_n = ctx.inbox.read().len() + ctx.sent.read().len() + ctx.threads.read().len();
     // 수신함에서 선택한 신청(있으면 우측에 수락/거절 표시).
@@ -88,6 +128,7 @@ pub fn Messages() -> Element {
                         oninput: move |e| query.set(e.value()),
                     }
                 }
+                CodeAccept {}
 
                 if !inbox.is_empty() {
                     div { class: "msg-section", "📩 수신함 (스크림 신청)" }
@@ -115,21 +156,21 @@ pub fn Messages() -> Element {
 
                 if !sent.is_empty() {
                     div { class: "msg-section", "📨 보낸 신청 (수락 대기중)" }
-                    for l in sent.iter() {
+                    for r in sent.iter() {
                         {
-                            let tid = l.team_id.clone();
-                            let cls = if sel_s.as_deref() == Some(l.team_id.as_str()) { "msg-item active" } else { "msg-item" };
+                            let tid = r.listing.team_id.clone();
+                            let cls = if sel_s.as_deref() == Some(r.listing.team_id.as_str()) { "msg-item active" } else { "msg-item" };
                             rsx! {
-                                div { key: "{l.team_id}", class: "{cls}",
+                                div { key: "{r.listing.team_id}", class: "{cls}",
                                     onclick: move |_| {
                                         sel_sent.set(Some(tid.clone()));
                                         sel_inbox.set(None);
                                         let mut a = ctx.active; a.set(None);
                                     },
-                                    TeamLogo { logo: l.logo.clone(), tag: l.tag.clone(), size: 44 }
+                                    TeamLogo { logo: r.listing.logo.clone(), tag: r.listing.tag.clone(), size: 44 }
                                     div { class: "msg-item-meta",
-                                        div { class: "msg-item-name", "{flag_for(&l.region)} {l.name}" }
-                                        div { class: "msg-item-sub", "내가 신청함 · 수락 대기중" }
+                                        div { class: "msg-item-name", "{flag_for(&r.listing.region)} {r.listing.name}" }
+                                        div { class: "msg-item-sub", "코드 {r.code} · 수락 대기중" }
                                     }
                                     span { class: "badge-wait", "대기" }
                                 }
@@ -182,9 +223,9 @@ pub fn Messages() -> Element {
                             None => rsx! { EmptyPane {} },
                         }
                     } else if let Some(tid) = sel_s.clone() {
-                        let it = sent.iter().find(|l| l.team_id == tid).cloned();
+                        let it = sent.iter().find(|r| r.listing.team_id == tid).cloned();
                         match it {
-                            Some(l) => rsx! { SentPane { team: l, sel_sent } },
+                            Some(r) => rsx! { SentPane { req: r, sel_sent } },
                             None => rsx! { EmptyPane {} },
                         }
                     } else if let Some(mid) = active.clone() {
@@ -203,30 +244,64 @@ pub fn Messages() -> Element {
 }
 
 #[component]
-fn SentPane(team: Listing, sel_sent: Signal<Option<String>>) -> Element {
+fn SentPane(req: crate::state::SentReq, sel_sent: Signal<Option<String>>) -> Element {
     let ctx = use_context::<AppCtx>();
-    let tid = team.team_id.clone();
+    let tid = req.listing.team_id.clone();
     rsx! {
         div { class: "conv-head",
-            TeamLogo { logo: team.logo.clone(), tag: team.tag.clone(), size: 44 }
-            div { div { class: "conv-name", "{team.name}" } div { class: "conv-sub", "{team.region}" } }
+            TeamLogo { logo: req.listing.logo.clone(), tag: req.listing.tag.clone(), size: 44 }
+            div { div { class: "conv-name", "{req.listing.name}" } div { class: "conv-sub", "{req.listing.region}" } }
         }
         div { class: "msg-empty",
             div { style: "font-size:40px;", "📨" }
-            h3 { class: "h-md", "{team.name} 에게 스크림을 신청했습니다" }
-            p { class: "muted", "메시지 큐에 전달됨 · 상대가 수락하면 대화가 시작됩니다." }
+            h3 { class: "h-md", "{req.listing.name} 에게 스크림을 신청했습니다" }
+            p { class: "muted", "상대방의 수락을 기다리는 중… 아래 코드를 상대에게 전달하세요." }
+            div { class: "code-box", "{req.code}" }
+            p { class: "caption", "상대가 이 코드로 입장해 수락하면 매칭이 확정됩니다." }
             button {
                 class: "btn btn-danger",
                 style: "margin-top:16px;",
                 onclick: move |_| {
-                    // 신청 취소 → 목록으로 복귀(다시 신청 가능)
-                    let remaining: Vec<_> = ctx.sent.read().clone().into_iter().filter(|l| l.team_id != tid).collect();
+                    let remaining: Vec<_> = ctx.sent.read().clone().into_iter().filter(|r| r.listing.team_id != tid).collect();
                     let mut s = ctx.sent; s.set(remaining);
                     sel_sent.set(None);
                     let mut st = ctx.status; st.set("신청을 취소했습니다".into());
                 },
                 "신청 취소"
             }
+        }
+    }
+}
+
+fn submit_code(ctx: AppCtx, online: bool, mut code: Signal<String>) {
+    let c = code.read().trim().to_string();
+    if c.is_empty() { return; }
+    if online {
+        ctx.send(ClientMsg::AcceptCode { code: c });
+        let mut st = ctx.status; st.set("코드 수락 요청 전송됨…".into());
+    } else if let Some(r) = ctx.sent.read().iter().find(|r| r.code == c).cloned() {
+        accept_by_code_local(ctx, r.listing.clone(), c);
+    } else {
+        let mut st = ctx.status; st.set("코드를 찾을 수 없습니다".into());
+    }
+    code.set(String::new());
+}
+
+#[component]
+fn CodeAccept() -> Element {
+    let ctx = use_context::<AppCtx>();
+    let code = use_signal(String::new);
+    let online = *ctx.online.read();
+    rsx! {
+        div { class: "code-accept",
+            input {
+                class: "code-accept-input",
+                placeholder: "받은 코드로 수락…",
+                value: "{code}",
+                oninput: move |e| { let mut c = code; c.set(e.value()); },
+                onkeydown: move |e: Event<KeyboardData>| { if e.key() == Key::Enter { submit_code(ctx, online, code); } },
+            }
+            button { class: "btn btn-primary", onclick: move |_| submit_code(ctx, online, code), "수락" }
         }
     }
 }

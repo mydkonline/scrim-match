@@ -71,6 +71,14 @@ fn handle_server_msg(ctx: AppCtx, msg: ServerMsg) {
         ServerMsg::ScrimList { listings: l } => {
             listings.set(l);
         }
+        ServerMsg::Applied { code, to } => {
+            let mut s = sent.read().clone();
+            if !s.iter().any(|r| r.listing.team_id == to.team_id) {
+                s.push(crate::state::SentReq { listing: to.clone(), code: code.clone() });
+                sent.set(s);
+            }
+            status.set(format!("신청 완료 — {} 에게 코드 {} 전달, 수락 대기중", to.name, code));
+        }
         ServerMsg::InviteIncoming { match_id, from } => {
             let mut list = inbox.read().clone();
             if !list.iter().any(|i| i.match_id == match_id) {
@@ -79,20 +87,14 @@ fn handle_server_msg(ctx: AppCtx, msg: ServerMsg) {
             }
             status.set(format!("📩 {} 가 스크림을 신청했습니다", from.name));
         }
-        ServerMsg::InviteSent { to, .. } => {
-            let mut s = sent.read().clone();
-            if !s.iter().any(|l| l.team_id == to.team_id) {
-                s.push(to);
-                sent.set(s);
-            }
-        }
+        ServerMsg::InviteSent { .. } => {}
         ServerMsg::InviteRejected { .. } => {
             status.set("상대가 신청을 거절했습니다".into());
         }
         ServerMsg::MatchConfirmed { match_id, scrim, opponent } => {
             searching.set(false);
             listings.set(Vec::new());
-            let remaining_sent: Vec<_> = sent.read().clone().into_iter().filter(|l| l.team_id != opponent.team_id).collect();
+            let remaining_sent: Vec<_> = sent.read().clone().into_iter().filter(|r| r.listing.team_id != opponent.team_id).collect();
             sent.set(remaining_sent);
             // 수신함에서 제거
             let remaining: Vec<_> = inbox.read().clone().into_iter().filter(|i| i.match_id != match_id).collect();

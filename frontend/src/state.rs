@@ -29,6 +29,13 @@ pub struct InboxItem {
     pub from: Listing,
 }
 
+/// 보낸 신청(메시지 큐). 상대에게 전달할 코드 포함.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SentReq {
+    pub listing: Listing,
+    pub code: String,
+}
+
 /// 확정 매칭 대화 스레드.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Thread {
@@ -62,8 +69,8 @@ pub struct AppCtx {
     // ── 매칭 플로우 ──
     pub searching: Signal<bool>,
     pub listings: Signal<Vec<Listing>>,
-    /// 내가 보낸 신청(메시지 큐 전달, 상대 수락 대기). 실시간 대기 없음.
-    pub sent: Signal<Vec<Listing>>,
+    /// 내가 보낸 신청(메시지 큐 전달, 상대 수락 대기). 코드 포함.
+    pub sent: Signal<Vec<SentReq>>,
     /// 수신함: 들어온 스크림 신청들.
     pub inbox: Signal<Vec<InboxItem>>,
     /// 확정 매칭 대화 스레드들.
