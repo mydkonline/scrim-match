@@ -223,6 +223,12 @@ input, select { font-family: var(--font); }
   border: 1px solid var(--hairline-cool); border-radius: var(--r-md); padding: var(--s-md); max-width: none;
 }
 .squad-col .player .avatar { width: 40px; height: 40px; }
+.player.draggable { cursor: grab; transition: opacity 0.12s ease, border-color 0.12s ease, transform 0.12s ease; }
+.player.draggable:hover { border-color: var(--primary); }
+.player.draggable:active { cursor: grabbing; }
+.player.dragging { opacity: 0.4; border-style: dashed; }
+.squad-col { min-height: 120px; border-radius: var(--r-md); transition: background 0.12s ease; }
+.squad-empty { border: 2px dashed var(--hairline-strong); border-radius: var(--r-md); padding: 18px; text-align: center; color: var(--ink-faint); font-size: 12px; }
 
 /* ---------------- Calendar ---------------- */
 .cal-tabs { display: flex; gap: var(--s-sm); margin-bottom: var(--s-xl); }
