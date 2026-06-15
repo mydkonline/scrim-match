@@ -17,20 +17,33 @@ pub fn initials(name: &str) -> String {
     name.chars().take(2).collect::<String>().to_uppercase()
 }
 
-/// 비-영숫자 문자를 퍼센트 인코딩(아바타 seed용 최소 인코더).
-fn enc(s: &str) -> String {
-    let mut out = String::new();
+fn hash(s: &str) -> u32 {
+    let mut h: u32 = 5381;
     for b in s.bytes() {
-        if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.') {
-            out.push(b as char);
-        } else {
-            out.push_str(&format!("%{b:02X}"));
-        }
+        h = h.wrapping_mul(33).wrapping_add(b as u32);
     }
-    out
+    h
 }
 
-/// 이름 기반 결정적 프로필 아바타 URL (DiceBear, 저작권 무관).
+/// 로컬 LoL 프로필 아이콘(av0..av39)으로 결정적 아바타.
+const AVATAR_COUNT: u32 = 40;
 pub fn avatar_url(name: &str) -> String {
-    format!("https://api.dicebear.com/9.x/thumbs/svg?seed={}&backgroundColor=f0f0f0", enc(name))
+    format!("profile-icons/av{}.png", hash(name) % AVATAR_COUNT)
+}
+
+/// 지역(리그)→국기 이모지.
+pub fn flag_for(region: &str) -> &'static str {
+    match region {
+        "LCK" | "ASL" => "🇰🇷",
+        "LPL" => "🇨🇳",
+        "LEC" => "🇪🇺",
+        "LCS" => "🇺🇸",
+        "CBLOL" => "🇧🇷",
+        "LJL" => "🇯🇵",
+        "PCS" => "🇹🇼",
+        "VCS" => "🇻🇳",
+        "LCP" => "🌏",
+        "VCT Pacific" => "🌏",
+        _ => "🏳️",
+    }
 }

@@ -96,7 +96,8 @@ fn handle_server_msg(ctx: AppCtx, msg: ServerMsg) {
             // 스레드 추가(중복 방지)
             let mut th = threads.read().clone();
             if !th.iter().any(|t| t.match_id == match_id) {
-                th.push(Thread { match_id: match_id.clone(), opponent: opponent.clone(), scrim, chat: Vec::new(), unread: 0 });
+                let squad_label = ctx.scrim_squad.read().label().to_string();
+                th.push(Thread { match_id: match_id.clone(), opponent: opponent.clone(), scrim, squad_label, chat: Vec::new(), unread: 0 });
                 threads.set(th);
             }
             active.set(Some(match_id));

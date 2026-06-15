@@ -18,7 +18,10 @@ pub fn NavBar() -> Element {
 
     rsx! {
         nav { class: "nav",
-            div { class: "brand", span { class: "dot" } "Scrim.GG" }
+            div { class: "brand", style: "cursor:pointer;",
+                onclick: move |_| ctx.goto(Screen::Matching),
+                span { class: "dot" } "Scrim.GG"
+            }
             div { class: "nav-links",
                 NavBtn { label: "Matching", target: Screen::Matching, current: screen }
                 NavBtn { label: "Messages", target: Screen::Messages, current: screen, badge: unread }

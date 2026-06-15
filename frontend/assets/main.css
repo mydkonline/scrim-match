@@ -271,6 +271,15 @@ input, select { font-family: var(--font); }
 .avatar-img { width: 44px; height: 44px; border-radius: var(--r-full); background: var(--canvas-soft); border: 1px solid var(--hairline-cool); flex-shrink: 0; }
 .team-header { display: flex; align-items: center; gap: var(--s-lg); }
 
+/* ---------------- Squad pick ---------------- */
+.squad-pick { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--s-sm); }
+.squad-chip {
+  border: 1px solid var(--hairline); border-radius: var(--r-md); background: var(--canvas);
+  padding: 10px 8px; font-size: 14px; font-weight: 500; color: var(--ink-mute);
+}
+.squad-chip:hover { border-color: var(--hairline-strong); }
+.squad-chip.active { border-color: var(--primary); color: var(--ink); box-shadow: 0 0 0 3px rgba(62,207,142,0.15); }
+
 /* ---------------- Search / globe ---------------- */
 .search-wrap { text-align: center; }
 .globe {

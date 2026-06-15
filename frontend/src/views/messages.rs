@@ -1,8 +1,56 @@
 use dioxus::prelude::*;
-use shared::ClientMsg;
+use gloo_timers::future::TimeoutFuture;
+use shared::{Listing, MatchStatus, ScrimMatch};
 
-use crate::state::{AppCtx, ChatMsg};
+use crate::state::{AppCtx, ChatMsg, Thread};
 use crate::views::TeamLogo;
+
+fn mock_code(seed: &str) -> String {
+    let mut h: u32 = 5381;
+    for b in seed.bytes() {
+        h = h.wrapping_mul(33).wrapping_add(b as u32);
+    }
+    format!("{:06}", h % 1_000_000)
+}
+
+/// 받은 신청을 수락 → 대화 스레드 생성(로컬).
+fn accept_invite(ctx: AppCtx, match_id: &str, from: &Listing) {
+    let my_id = ctx.my_team.read().as_ref().map(|t| t.id.clone()).unwrap_or_default();
+    let date = ctx.scrim_date.read().clone();
+    let time = ctx.scrim_time.read().clone();
+    let squad = *ctx.scrim_squad.read();
+    let scrim = ScrimMatch {
+        id: match_id.to_string(),
+        team_a: from.team_id.clone(),
+        team_b: my_id,
+        game: from.game,
+        date: date.clone(),
+        time: time.clone(),
+        code: mock_code(&format!("{match_id}{date}{time}")),
+        status: MatchStatus::Confirmed,
+    };
+    let mut threads = ctx.threads.read().clone();
+    if !threads.iter().any(|t| t.match_id == match_id) {
+        threads.push(Thread {
+            match_id: match_id.to_string(),
+            opponent: from.clone(),
+            scrim,
+            squad_label: squad.label().to_string(),
+            chat: Vec::new(),
+            unread: 0,
+        });
+        let mut ts = ctx.threads;
+        ts.set(threads);
+    }
+    // 수신함에서 제거
+    let remaining: Vec<_> = ctx.inbox.read().clone().into_iter().filter(|i| i.match_id != match_id).collect();
+    let mut ib = ctx.inbox;
+    ib.set(remaining);
+    let mut a = ctx.active;
+    a.set(Some(match_id.to_string()));
+    let mut st = ctx.status;
+    st.set(format!("✅ 매칭 확정! vs {}", from.name));
+}
 
 #[component]
 pub fn Messages() -> Element {
@@ -126,18 +174,21 @@ fn InvitePane(match_id: String, from: shared::Listing, sel_inbox: Signal<Option<
             div { class: "row-gap", style: "margin-top:16px;",
                 button {
                     class: "btn btn-primary",
-                    onclick: move |_| {
-                        ctx.send(ClientMsg::Accept { match_id: accept_id.clone() });
-                        sel_inbox.set(None);
+                    onclick: {
+                        let from = from.clone();
+                        move |_| {
+                            accept_invite(ctx, &accept_id, &from);
+                            sel_inbox.set(None);
+                        }
                     },
                     "수락"
                 }
                 button {
                     class: "btn btn-danger",
                     onclick: move |_| {
-                        ctx.send(ClientMsg::Reject { match_id: reject_id.clone() });
                         let remaining: Vec<_> = ctx.inbox.read().clone().into_iter().filter(|i| i.match_id != reject_id).collect();
                         let mut ib = ctx.inbox; ib.set(remaining);
+                        let mut st = ctx.status; st.set("신청을 거절했습니다".into());
                         sel_inbox.set(None);
                     },
                     "거절"
@@ -158,13 +209,32 @@ fn ChatPane(thread: crate::state::Thread) -> Element {
     let send = move |mid: String, my_name: String, draft: &mut Signal<String>| {
         let text = draft.read().trim().to_string();
         if text.is_empty() { return; }
-        let mut th = ctx.threads.read().clone();
-        if let Some(t) = th.iter_mut().find(|t| t.match_id == mid) {
-            t.chat.push(ChatMsg { mine: true, name: my_name.clone(), text: text.clone() });
+        {
+            let mut th = ctx.threads.read().clone();
+            if let Some(t) = th.iter_mut().find(|t| t.match_id == mid) {
+                t.chat.push(ChatMsg { mine: true, name: my_name.clone(), text });
+            }
+            let mut ts = ctx.threads; ts.set(th);
         }
-        let mut ts = ctx.threads; ts.set(th);
-        ctx.send(ClientMsg::Chat { match_id: mid, text });
         draft.set(String::new());
+        // 상대 자동 응답(데모)
+        let mid2 = mid.clone();
+        spawn(async move {
+            TimeoutFuture::new(1100).await;
+            let mut th = ctx.threads.read().clone();
+            if let Some(t) = th.iter_mut().find(|t| t.match_id == mid2) {
+                let name = t.opponent.name.clone();
+                let replies = [
+                    "좋습니다! 그 시간 가능합니다 👍",
+                    "콜! 디스코드로 바로 들어갈게요",
+                    "오케이, 풀 5인 준비됐습니다",
+                    "넵 그때 봬요. 코드 확인했습니다",
+                ];
+                let idx = t.chat.len() % replies.len();
+                t.chat.push(ChatMsg { mine: false, name, text: replies[idx].to_string() });
+                let mut ts = ctx.threads; ts.set(th);
+            }
+        });
     };
 
     rsx! {
@@ -172,7 +242,7 @@ fn ChatPane(thread: crate::state::Thread) -> Element {
             TeamLogo { logo: thread.opponent.logo.clone(), tag: thread.opponent.tag.clone(), size: 44 }
             div {
                 div { class: "conv-name", "{thread.opponent.name}" }
-                div { class: "conv-sub", "{thread.scrim.date} {thread.scrim.time} · CODE {thread.scrim.code}" }
+                div { class: "conv-sub", "{thread.squad_label} · {thread.scrim.date} {thread.scrim.time} · CODE {thread.scrim.code}" }
             }
         }
         div { class: "chat-log conv-log",

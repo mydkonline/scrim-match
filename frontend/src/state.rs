@@ -2,7 +2,7 @@
 
 use dioxus::prelude::*;
 use futures::channel::mpsc::UnboundedSender;
-use shared::{ClientMsg, Game, Listing, ScrimMatch, Team};
+use shared::{ClientMsg, Game, Listing, ScrimMatch, Squad, Team};
 
 /// 최상위 화면.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -35,6 +35,7 @@ pub struct Thread {
     pub match_id: String,
     pub opponent: Listing,
     pub scrim: ScrimMatch,
+    pub squad_label: String,
     pub chat: Vec<ChatMsg>,
     pub unread: u32,
 }
@@ -50,6 +51,11 @@ pub struct AppCtx {
     pub online: Signal<bool>,
     pub status: Signal<String>,
     pub ws_tx: Signal<Option<UnboundedSender<ClientMsg>>>,
+
+    // ── 스크림 슬롯 선택 ──
+    pub scrim_date: Signal<String>,
+    pub scrim_time: Signal<String>,
+    pub scrim_squad: Signal<Squad>,
 
     // ── 매칭 플로우 ──
     pub searching: Signal<bool>,
@@ -75,6 +81,9 @@ impl AppCtx {
             online: use_signal(|| false),
             status: use_signal(String::new),
             ws_tx: use_signal(|| Option::<UnboundedSender<ClientMsg>>::None),
+            scrim_date: use_signal(|| "2026-06-20".to_string()),
+            scrim_time: use_signal(|| "19:00".to_string()),
+            scrim_squad: use_signal(|| Squad::First),
             searching: use_signal(|| false),
             listings: use_signal(Vec::new),
             outgoing: use_signal(|| Option::<(String, Listing)>::None),

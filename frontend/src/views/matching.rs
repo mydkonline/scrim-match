@@ -1,13 +1,75 @@
 use dioxus::prelude::*;
-use shared::{ClientMsg, Listing};
+use gloo_timers::future::TimeoutFuture;
+use shared::{Listing, MatchStatus, ScrimMatch, Squad, Team};
 
-use crate::state::{AppCtx, Screen};
-use crate::views::initials;
+use crate::state::{AppCtx, InboxItem, Screen, Thread};
+use crate::views::{flag_for, initials};
+
+fn mock_code(seed: &str) -> String {
+    let mut h: u32 = 5381;
+    for b in seed.bytes() {
+        h = h.wrapping_mul(33).wrapping_add(b as u32);
+    }
+    format!("{:06}", h % 1_000_000)
+}
+
+fn listing_of(t: &Team) -> Listing {
+    Listing::from_team(t, false)
+}
+
+/// 같은 종목의 다른 팀 목록(로컬, 연결 무관).
+fn local_listings(ctx: AppCtx) -> Vec<Listing> {
+    let game = *ctx.game.read();
+    let my_id = ctx.my_team.read().as_ref().map(|t| t.id.clone());
+    ctx.teams
+        .read()
+        .iter()
+        .filter(|t| t.game == game && Some(&t.id) != my_id.as_ref())
+        .map(listing_of)
+        .collect()
+}
+
+/// 매칭 확정 처리(로컬): 스레드 생성 후 메시지함으로 이동.
+fn confirm(ctx: AppCtx, opp: Listing) {
+    let my_id = ctx.my_team.read().as_ref().map(|t| t.id.clone()).unwrap_or_default();
+    let date = ctx.scrim_date.read().clone();
+    let time = ctx.scrim_time.read().clone();
+    let squad = *ctx.scrim_squad.read();
+    let mid = format!("m-{my_id}-{}", opp.team_id);
+    let scrim = ScrimMatch {
+        id: mid.clone(),
+        team_a: my_id,
+        team_b: opp.team_id.clone(),
+        game: opp.game,
+        date: date.clone(),
+        time: time.clone(),
+        code: mock_code(&format!("{}{}{}{}", mid, date, time, squad.label())),
+        status: MatchStatus::Confirmed,
+    };
+    let mut threads = ctx.threads.read().clone();
+    if !threads.iter().any(|t| t.match_id == mid) {
+        threads.push(Thread {
+            match_id: mid.clone(),
+            opponent: opp.clone(),
+            scrim,
+            squad_label: squad.label().to_string(),
+            chat: Vec::new(),
+            unread: 0,
+        });
+        let mut ts = ctx.threads;
+        ts.set(threads);
+    }
+    ctx.reset_search();
+    let mut a = ctx.active;
+    a.set(Some(mid));
+    let mut st = ctx.status;
+    st.set(format!("✅ 매칭 확정! vs {}", opp.name));
+    ctx.goto(Screen::Messages);
+}
 
 #[component]
 pub fn Matching() -> Element {
     let ctx = use_context::<AppCtx>();
-    let online = *ctx.online.read();
     let searching = *ctx.searching.read();
     let listings = ctx.listings.read().clone();
     let outgoing = ctx.outgoing.read().clone();
@@ -15,23 +77,12 @@ pub fn Matching() -> Element {
 
     rsx! {
         h1 { class: "h-lg", "스크림 매칭" }
-        p { class: "muted", "슬롯을 정하고 전 세계 팀을 검색해 스크림을 신청하세요." }
+        p { class: "muted", "슬롯·군을 정하고 전 세계 팀을 검색해 스크림을 신청하세요." }
 
-        if !online {
-            div { class: "card mt-xl", style: "border-color:var(--hairline-strong);",
-                p { class: "muted", "⚠️ 실서버에 연결되지 않았습니다(오프라인). 매칭은 온라인에서만 동작합니다." }
-            }
-        }
-
-        // 들어온 신청 알림 배너
         if inbox_n > 0 {
             div { class: "inbox-banner mt-xl",
                 "📩 새 스크림 신청 {inbox_n}건이 도착했습니다."
-                button {
-                    class: "btn btn-primary",
-                    onclick: move |_| ctx.goto(Screen::Messages),
-                    "수신함 열기"
-                }
+                button { class: "btn btn-primary", onclick: move |_| ctx.goto(Screen::Messages), "수신함 열기" }
             }
         }
 
@@ -50,10 +101,10 @@ pub fn Matching() -> Element {
 #[component]
 fn SearchForm() -> Element {
     let ctx = use_context::<AppCtx>();
-    let my_team = ctx.my_team.read().clone();
-    let mut date = use_signal(|| "2026-06-20".to_string());
-    let mut time = use_signal(|| "19:00".to_string());
-    let mut same_region = use_signal(|| false);
+    let mut date = ctx.scrim_date;
+    let mut time = ctx.scrim_time;
+    let mut squad = ctx.scrim_squad;
+    let cur_squad = *squad.read();
 
     rsx! {
         div { class: "card", style: "max-width:460px;margin:0 auto;",
@@ -61,35 +112,66 @@ fn SearchForm() -> Element {
             div { class: "slot-row",
                 div { class: "field", style: "margin:0;",
                     label { "DATE" }
-                    input { class: "input", r#type: "date", value: "{date}",
-                        oninput: move |e| date.set(e.value()) }
+                    input { class: "input", r#type: "date", value: "{date}", oninput: move |e| date.set(e.value()) }
                 }
                 div { class: "field", style: "margin:0;",
                     label { "TIME" }
-                    input { class: "input", r#type: "time", value: "{time}",
-                        oninput: move |e| time.set(e.value()) }
+                    input { class: "input", r#type: "time", value: "{time}", oninput: move |e| time.set(e.value()) }
                 }
             }
-            label { class: "row-gap", style: "margin-top:12px;font-size:13px;color:var(--ink-secondary);",
-                input { r#type: "checkbox", checked: "{same_region}",
-                    onchange: move |e| same_region.set(e.checked()) }
-                "같은 지역(리그) 팀만 검색"
+            // 1군 / 2군 / Academy 선택
+            div { class: "field", style: "margin-top:12px;margin-bottom:0;",
+                label { "사용할 로스터 (군)" }
+                div { class: "squad-pick",
+                    SquadPick { squad: Squad::First, current: cur_squad }
+                    SquadPick { squad: Squad::Second, current: cur_squad }
+                    SquadPick { squad: Squad::Academy, current: cur_squad }
+                }
             }
             button {
                 class: "btn btn-primary btn-block",
                 style: "margin-top:16px;",
                 onclick: move |_| {
-                    let region = if *same_region.read() {
-                        my_team.as_ref().map(|t| t.region.clone())
-                    } else { None };
                     let mut s = ctx.searching;
                     s.set(true);
                     let mut l = ctx.listings;
                     l.set(Vec::new());
-                    ctx.send(ClientMsg::Search { date: date.read().clone(), time: time.read().clone(), region });
+                    // 로컬 검색 시뮬레이션: 연결 연출 후 리스트 표시 + 데모 수신 신청
+                    spawn(async move {
+                        TimeoutFuture::new(1000).await;
+                        if !*ctx.searching.read() { return; }
+                        let mut l = ctx.listings;
+                        l.set(local_listings(ctx));
+                        // 잠시 뒤 다른 팀이 나에게 신청(수락/거절 체험용)
+                        TimeoutFuture::new(2600).await;
+                        if !*ctx.searching.read() { return; }
+                        if ctx.inbox.read().is_empty() {
+                            let cands = local_listings(ctx);
+                            if let Some(from) = cands.into_iter().next() {
+                                let mut ib = ctx.inbox.read().clone();
+                                ib.push(InboxItem { match_id: format!("in-{}", from.team_id), from: from.clone() });
+                                let mut s = ctx.inbox; s.set(ib);
+                                let mut st = ctx.status; st.set(format!("📩 {} 가 스크림을 신청했습니다 — 메시지함 확인", from.name));
+                            }
+                        }
+                    });
                 },
                 "🔍 스크림 상대 찾기"
             }
+        }
+    }
+}
+
+#[component]
+fn SquadPick(squad: Squad, current: Squad) -> Element {
+    let ctx = use_context::<AppCtx>();
+    let active = squad == current;
+    let cls = if active { "squad-chip active" } else { "squad-chip" };
+    rsx! {
+        button {
+            class: "{cls}",
+            onclick: move |_| { let mut s = ctx.scrim_squad; s.set(squad); },
+            "{squad.label()}"
         }
     }
 }
@@ -101,23 +183,13 @@ fn SearchingView(listings: Vec<Listing>) -> Element {
     rsx! {
         div { class: "search-wrap",
             if !found {
-                // ── 검색 중 ──
                 div { class: "globe", "🌐" }
                 p { class: "h-md center", "전 세계 상대 검색 중…" }
                 p { class: "caption center", "스크림 가능한 팀이 실시간으로 표시됩니다" }
-                button {
-                    class: "btn btn-outline",
-                    style: "display:block;margin:12px auto;",
-                    onclick: move |_| {
-                        let mut s = ctx.searching;
-                        s.set(false);
-                        ctx.send(ClientMsg::StopSearch);
-                    },
-                    "검색 취소"
-                }
+                button { class: "btn btn-outline", style: "display:block;margin:12px auto;",
+                    onclick: move |_| { let mut s = ctx.searching; s.set(false); }, "검색 취소" }
                 p { class: "caption center", style: "margin-top:8px;", "상대를 찾는 중…" }
             } else {
-                // ── 상대 발견 → 연결 과정 (CSS 연출) ──
                 div { class: "connect-seq",
                     div { class: "connect-globe", "🌐" }
                     div { class: "connect-check", "✓" }
@@ -129,25 +201,15 @@ fn SearchingView(listings: Vec<Listing>) -> Element {
                     }
                     div { class: "connect-bar", div { class: "connect-bar-fill" } }
                 }
-
-                // 연결 연출 후 페이드인되는 리스트
                 div { class: "listing-reveal",
-                    p { class: "caption center", style: "margin-bottom:8px;", "🌐 연결됨 · 스크림 가능한 팀" }
+                    p { class: "caption center", style: "margin-bottom:8px;", "🌐 연결됨 · 스크림 가능한 팀 (국가별)" }
                     div { class: "listing-grid",
                         for l in listings.iter() {
                             ListingCard { listing: l.clone() }
                         }
                     }
-                    button {
-                        class: "btn btn-outline",
-                        style: "display:block;margin:16px auto 0;",
-                        onclick: move |_| {
-                            let mut s = ctx.searching;
-                            s.set(false);
-                            ctx.send(ClientMsg::StopSearch);
-                        },
-                        "검색 취소"
-                    }
+                    button { class: "btn btn-outline", style: "display:block;margin:16px auto 0;",
+                        onclick: move |_| { let mut s = ctx.searching; s.set(false); }, "검색 취소" }
                 }
             }
         }
@@ -157,20 +219,31 @@ fn SearchingView(listings: Vec<Listing>) -> Element {
 #[component]
 fn ListingCard(listing: Listing) -> Element {
     let ctx = use_context::<AppCtx>();
-    let tid = listing.team_id.clone();
+    let flag = flag_for(&listing.region);
     rsx! {
         div { class: "listing-card",
             TeamLogo { logo: listing.logo.clone(), tag: listing.tag.clone(), size: 40 }
             div { class: "listing-meta",
-                div { class: "lname",
-                    "{listing.name}"
-                    if listing.demo { span { class: "demo-badge", "DEMO" } }
-                }
-                div { class: "lregion", "{listing.region}" }
+                div { class: "lname", "{listing.name}" }
+                div { class: "lregion", "{flag} {listing.region}" }
             }
             button {
                 class: "btn btn-primary",
-                onclick: move |_| ctx.send(ClientMsg::Invite { target_team: tid.clone() }),
+                onclick: {
+                    let opp = listing.clone();
+                    move |_| {
+                        let opp = opp.clone();
+                        let mid = format!("out-{}", opp.team_id);
+                        let mut o = ctx.outgoing; o.set(Some((mid, opp.clone())));
+                        let mut st = ctx.status; st.set("신청이 완료되었습니다 — 상대 수락 대기 중".into());
+                        spawn(async move {
+                            TimeoutFuture::new(1700).await;
+                            if ctx.outgoing.read().is_some() {
+                                confirm(ctx, opp);
+                            }
+                        });
+                    }
+                },
                 "신청"
             }
         }
@@ -184,13 +257,10 @@ fn WaitingCard(opponent: Listing) -> Element {
         div { class: "card center", style: "max-width:420px;margin:0 auto;",
             TeamLogo { logo: opponent.logo.clone(), tag: opponent.tag.clone(), size: 64 }
             h3 { class: "h-md", style: "margin:12px 0 4px;", "{opponent.name}" }
+            p { class: "caption", style: "color:var(--primary-deep);font-weight:600;", "신청이 완료되었습니다" }
             div { class: "spinner-dots", span {} span {} span {} }
             p { class: "muted", "상대의 수락을 기다리는 중…" }
-            button {
-                class: "btn btn-outline",
-                onclick: move |_| { let mut o = ctx.outgoing; o.set(None); },
-                "취소하고 목록으로"
-            }
+            button { class: "btn btn-outline", onclick: move |_| { let mut o = ctx.outgoing; o.set(None); }, "취소" }
         }
     }
 }
