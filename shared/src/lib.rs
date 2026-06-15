@@ -187,6 +187,8 @@ pub enum ClientMsg {
     Reject { match_id: String },
     /// 확정된 매칭 채팅 메시지.
     Chat { match_id: String, text: String },
+    /// 내 팀 선수의 군(1군/2군/Academy) 변경(드래그 스왑 영속화).
+    MovePlayer { player_id: String, squad: Squad },
 }
 
 /// 서버 → 클라이언트.

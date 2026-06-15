@@ -1,10 +1,10 @@
 use dioxus::prelude::*;
-use shared::{Player, Squad, Team};
+use shared::{ClientMsg, Player, Squad, Team};
 
 use crate::state::AppCtx;
 use crate::views::{avatar_url, initials, TeamLogo};
 
-/// 두 선수의 군(squad)을 교체.
+/// 두 선수의 군(squad)을 교체하고 서버에 영속화.
 fn swap_squads(ctx: AppCtx, a_id: &str, b_id: &str) {
     if a_id == b_id {
         return;
@@ -22,10 +22,13 @@ fn swap_squads(ctx: AppCtx, a_id: &str, b_id: &str) {
         }
         let mut mt = ctx.my_team;
         mt.set(Some(team));
+        // 서버 영속화(양쪽 선수의 새 군 전송).
+        ctx.send(ClientMsg::MovePlayer { player_id: a_id.to_string(), squad: sb });
+        ctx.send(ClientMsg::MovePlayer { player_id: b_id.to_string(), squad: sa });
     }
 }
 
-/// 드래그한 선수를 특정 군으로 이동(칼럼에 드롭).
+/// 드래그한 선수를 특정 군으로 이동(칼럼에 드롭)하고 서버에 영속화.
 fn move_to_squad(ctx: AppCtx, id: &str, squad: Squad) {
     let Some(mut team) = ctx.my_team.read().clone() else { return };
     let mut changed = false;
@@ -38,6 +41,7 @@ fn move_to_squad(ctx: AppCtx, id: &str, squad: Squad) {
     if changed {
         let mut mt = ctx.my_team;
         mt.set(Some(team));
+        ctx.send(ClientMsg::MovePlayer { player_id: id.to_string(), squad });
     }
 }
 

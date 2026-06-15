@@ -163,6 +163,17 @@ pub async fn persist_match(pool: &PgPool, m: &ScrimMatch) {
     }
 }
 
+pub async fn update_player_squad(pool: &PgPool, player_id: &str, squad: Squad) {
+    let res = sqlx::query("UPDATE players SET squad=$1 WHERE id=$2")
+        .bind(squad_to_str(squad))
+        .bind(player_id)
+        .execute(pool)
+        .await;
+    if let Err(e) = res {
+        tracing::error!("update_player_squad failed: {e}");
+    }
+}
+
 pub async fn load_calendar(pool: &PgPool, teams: &[Team]) -> Vec<CalendarEntry> {
     let rows = sqlx::query(
         "SELECT team_b,game,date FROM matches WHERE status='Confirmed' ORDER BY date",

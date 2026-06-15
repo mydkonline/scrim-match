@@ -60,7 +60,8 @@ struct Inner {
 }
 
 struct AppState {
-    teams: Vec<Team>,
+    /// 로스터 변경(드래그 스왑)을 반영하기 위해 Mutex.
+    teams: Mutex<Vec<Team>>,
     inner: Mutex<Inner>,
     /// Postgres 풀(없으면 인메모리 전용).
     pool: Option<sqlx::PgPool>,
@@ -68,7 +69,10 @@ struct AppState {
 
 impl AppState {
     fn find_team(&self, id: &str) -> Option<Team> {
-        self.teams.iter().find(|t| t.id == id).cloned()
+        self.teams.lock().unwrap().iter().find(|t| t.id == id).cloned()
+    }
+    fn all_teams(&self) -> Vec<Team> {
+        self.teams.lock().unwrap().clone()
     }
 }
 
@@ -103,7 +107,7 @@ async fn main() {
     };
 
     let state: Shared = Arc::new(AppState {
-        teams,
+        teams: Mutex::new(teams),
         inner: Mutex::new(Inner::default()),
         pool,
     });
@@ -141,7 +145,7 @@ async fn health() -> impl IntoResponse {
 }
 
 async fn list_teams(State(state): State<Shared>) -> impl IntoResponse {
-    Json(state.teams.clone())
+    Json(state.all_teams())
 }
 
 async fn get_team(
@@ -166,7 +170,8 @@ fn fallback_calendar() -> Vec<CalendarEntry> {
 /// DB 연결 시 확정 매칭 기반, 없으면 데모 폴백.
 async fn calendar(State(state): State<Shared>) -> impl IntoResponse {
     if let Some(pool) = &state.pool {
-        let cal = db::load_calendar(pool, &state.teams).await;
+        let teams = state.all_teams();
+        let cal = db::load_calendar(pool, &teams).await;
         if !cal.is_empty() {
             return Json(cal);
         }
@@ -212,25 +217,28 @@ fn region_ok(
 
 /// 특정 검색자 기준으로 같은 슬롯의 실제 검색 팀 + 데모 봇 목록을 만든다.
 fn compute_listings(state: &Shared, inner: &Inner, me: &PoolEntry) -> Vec<Listing> {
-    let my_region = state.find_team(&me.team_id).map(|t| t.region);
+    let teams = state.all_teams();
+    let team_by = |id: &str| teams.iter().find(|t| t.id == id).cloned();
+    let my_region = team_by(&me.team_id).map(|t| t.region);
     let mut out = Vec::new();
 
+    // 데모: 일정(날짜/시간) 무관하게 같은 종목이면 매칭.
     for q in &inner.pool {
-        if q.team_id == me.team_id || q.game != me.game || q.date != me.date || q.time != me.time {
+        if q.team_id == me.team_id || q.game != me.game {
             continue;
         }
-        let q_region = state.find_team(&q.team_id).map(|t| t.region);
+        let q_region = team_by(&q.team_id).map(|t| t.region);
         if !region_ok(my_region.as_deref(), &me.region, q_region.as_deref(), &q.region) {
             continue;
         }
-        if let Some(t) = state.find_team(&q.team_id) {
+        if let Some(t) = team_by(&q.team_id) {
             out.push(Listing::from_team(&t, !inner.clients.contains_key(&q.team_id)));
         }
     }
 
     // 데모 봇: 같은 종목의 시드 팀(접속/검색중 아님) 최대 6팀.
     let mut demo = 0;
-    for t in &state.teams {
+    for t in &teams {
         if demo >= 6 {
             break;
         }
@@ -314,8 +322,8 @@ fn schedule_demo_invite(
         if inner.matches.values().any(|r| r.inviter == my_id || r.invitee == my_id) {
             return; // 이미 진행 중인 매칭 있음
         }
-        let pick = state
-            .teams
+        let teams = state.all_teams();
+        let pick = teams
             .iter()
             .find(|t| {
                 t.game == game
@@ -542,6 +550,28 @@ async fn handle_socket(socket: WebSocket, state: Shared) {
                 } else {
                     drop(inner);
                     schedule_demo_chat(state.clone(), match_id, other, my_id);
+                }
+            }
+
+            ClientMsg::MovePlayer { player_id, squad } => {
+                let Some((my_id, _)) = me.clone() else { continue };
+                // 내 팀 선수만 변경 가능. 인메모리 즉시 반영.
+                let mut belongs = false;
+                {
+                    let mut teams = state.teams.lock().unwrap();
+                    if let Some(t) = teams.iter_mut().find(|t| t.id == my_id) {
+                        if let Some(p) = t.roster.iter_mut().find(|p| p.id == player_id) {
+                            p.squad = squad;
+                            belongs = true;
+                        }
+                    }
+                }
+                // DB 영속화.
+                if belongs {
+                    if let Some(pool) = state.pool.clone() {
+                        let pid = player_id.clone();
+                        tokio::spawn(async move { db::update_player_squad(&pool, &pid, squad).await; });
+                    }
                 }
             }
         }
