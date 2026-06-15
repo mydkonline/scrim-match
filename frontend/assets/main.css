@@ -401,6 +401,7 @@ input, select { font-family: var(--font); }
 .msg-ava-wrap { position: relative; flex-shrink: 0; }
 .online-dot { position: absolute; right: -1px; bottom: -1px; width: 11px; height: 11px; border-radius: var(--r-full); background: #22c55e; border: 2px solid var(--canvas); }
 .badge-new { font-size: 10px; font-weight: 700; color: #fff; background: var(--primary-deep); border-radius: var(--r-full); padding: 2px 7px; }
+.badge-wait { font-size: 10px; font-weight: 700; color: #b45309; background: #fef3c7; border: 1px solid #fcd34d; border-radius: var(--r-full); padding: 1px 7px; }
 .badge-unread { display: inline-grid; place-items: center; min-width: 18px; height: 18px; padding: 0 5px; border-radius: var(--r-full); background: #e5484d; color: #fff; font-size: 11px; font-weight: 600; }
 
 .msg-conversation { display: flex; flex-direction: column; min-width: 0; }

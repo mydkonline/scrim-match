@@ -61,11 +61,15 @@ pub fn Messages() -> Element {
         .filter(|i| q.is_empty() || i.from.name.to_lowercase().contains(&q)).collect();
     let threads: Vec<_> = ctx.threads.read().clone().into_iter()
         .filter(|t| q.is_empty() || t.opponent.name.to_lowercase().contains(&q)).collect();
+    let sent: Vec<_> = ctx.sent.read().clone().into_iter()
+        .filter(|l| q.is_empty() || l.name.to_lowercase().contains(&q)).collect();
     let active = ctx.active.read().clone();
-    let total_n = ctx.inbox.read().len() + ctx.threads.read().len();
+    let total_n = ctx.inbox.read().len() + ctx.sent.read().len() + ctx.threads.read().len();
     // 수신함에서 선택한 신청(있으면 우측에 수락/거절 표시).
     let mut sel_inbox = use_signal(|| Option::<String>::None);
+    let mut sel_sent = use_signal(|| Option::<String>::None);
     let sel = sel_inbox.read().clone();
+    let sel_s = sel_sent.read().clone();
 
     rsx! {
         div { class: "msg-dashboard",
@@ -109,8 +113,33 @@ pub fn Messages() -> Element {
                     }
                 }
 
+                if !sent.is_empty() {
+                    div { class: "msg-section", "📨 보낸 신청 (수락 대기중)" }
+                    for l in sent.iter() {
+                        {
+                            let tid = l.team_id.clone();
+                            let cls = if sel_s.as_deref() == Some(l.team_id.as_str()) { "msg-item active" } else { "msg-item" };
+                            rsx! {
+                                div { key: "{l.team_id}", class: "{cls}",
+                                    onclick: move |_| {
+                                        sel_sent.set(Some(tid.clone()));
+                                        sel_inbox.set(None);
+                                        let mut a = ctx.active; a.set(None);
+                                    },
+                                    TeamLogo { logo: l.logo.clone(), tag: l.tag.clone(), size: 44 }
+                                    div { class: "msg-item-meta",
+                                        div { class: "msg-item-name", "{flag_for(&l.region)} {l.name}" }
+                                        div { class: "msg-item-sub", "내가 신청함 · 수락 대기중" }
+                                    }
+                                    span { class: "badge-wait", "대기" }
+                                }
+                            }
+                        }
+                    }
+                }
+
                 div { class: "msg-section", "💬 대화" }
-                if threads.is_empty() && inbox.is_empty() {
+                if threads.is_empty() && inbox.is_empty() && sent.is_empty() {
                     p { class: "caption", style: "padding:16px;", "아직 대화가 없습니다. 매칭이 확정되면 여기에 표시됩니다." }
                 }
                 for t in threads.iter() {
@@ -152,6 +181,12 @@ pub fn Messages() -> Element {
                             Some(it) => rsx! { InvitePane { match_id: it.match_id.clone(), from: it.from.clone(), sel_inbox } },
                             None => rsx! { EmptyPane {} },
                         }
+                    } else if let Some(tid) = sel_s.clone() {
+                        let it = sent.iter().find(|l| l.team_id == tid).cloned();
+                        match it {
+                            Some(l) => rsx! { SentPane { team: l, sel_sent } },
+                            None => rsx! { EmptyPane {} },
+                        }
                     } else if let Some(mid) = active.clone() {
                         let thread = threads.iter().find(|t| t.match_id == mid).cloned();
                         match thread {
@@ -162,6 +197,35 @@ pub fn Messages() -> Element {
                         rsx! { EmptyPane {} }
                     }
                 }
+            }
+        }
+    }
+}
+
+#[component]
+fn SentPane(team: Listing, sel_sent: Signal<Option<String>>) -> Element {
+    let ctx = use_context::<AppCtx>();
+    let tid = team.team_id.clone();
+    rsx! {
+        div { class: "conv-head",
+            TeamLogo { logo: team.logo.clone(), tag: team.tag.clone(), size: 44 }
+            div { div { class: "conv-name", "{team.name}" } div { class: "conv-sub", "{team.region}" } }
+        }
+        div { class: "msg-empty",
+            div { style: "font-size:40px;", "📨" }
+            h3 { class: "h-md", "{team.name} 에게 스크림을 신청했습니다" }
+            p { class: "muted", "메시지 큐에 전달됨 · 상대가 수락하면 대화가 시작됩니다." }
+            button {
+                class: "btn btn-danger",
+                style: "margin-top:16px;",
+                onclick: move |_| {
+                    // 신청 취소 → 목록으로 복귀(다시 신청 가능)
+                    let remaining: Vec<_> = ctx.sent.read().clone().into_iter().filter(|l| l.team_id != tid).collect();
+                    let mut s = ctx.sent; s.set(remaining);
+                    sel_sent.set(None);
+                    let mut st = ctx.status; st.set("신청을 취소했습니다".into());
+                },
+                "신청 취소"
             }
         }
     }

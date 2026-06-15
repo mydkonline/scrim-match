@@ -1,17 +1,9 @@
 use dioxus::prelude::*;
 use gloo_timers::future::TimeoutFuture;
-use shared::{Listing, MatchStatus, ScrimMatch, Squad, Team};
+use shared::{Listing, Squad, Team};
 
-use crate::state::{AppCtx, InboxItem, Screen, Thread};
+use crate::state::{AppCtx, InboxItem, Screen};
 use crate::views::{flag_for, initials};
-
-fn mock_code(seed: &str) -> String {
-    let mut h: u32 = 5381;
-    for b in seed.bytes() {
-        h = h.wrapping_mul(33).wrapping_add(b as u32);
-    }
-    format!("{:06}", h % 1_000_000)
-}
 
 fn listing_of(t: &Team) -> Listing {
     Listing::from_team(t, false)
@@ -48,44 +40,6 @@ fn regions_for(ctx: AppCtx) -> Vec<String> {
     regs
 }
 
-/// 매칭 확정 처리(로컬): 스레드 생성 후 메시지함으로 이동.
-fn confirm(ctx: AppCtx, opp: Listing) {
-    let my_id = ctx.my_team.read().as_ref().map(|t| t.id.clone()).unwrap_or_default();
-    let date = ctx.scrim_date.read().clone();
-    let time = ctx.scrim_time.read().clone();
-    let squad = *ctx.scrim_squad.read();
-    let mid = format!("m-{my_id}-{}", opp.team_id);
-    let scrim = ScrimMatch {
-        id: mid.clone(),
-        team_a: my_id,
-        team_b: opp.team_id.clone(),
-        game: opp.game,
-        date: date.clone(),
-        time: time.clone(),
-        code: mock_code(&format!("{}{}{}{}", mid, date, time, squad.label())),
-        status: MatchStatus::Confirmed,
-    };
-    let mut threads = ctx.threads.read().clone();
-    if !threads.iter().any(|t| t.match_id == mid) {
-        threads.push(Thread {
-            match_id: mid.clone(),
-            opponent: opp.clone(),
-            scrim,
-            squad_label: squad.label().to_string(),
-            chat: Vec::new(),
-            unread: 0,
-        });
-        let mut ts = ctx.threads;
-        ts.set(threads);
-    }
-    ctx.reset_search();
-    let mut a = ctx.active;
-    a.set(Some(mid));
-    let mut st = ctx.status;
-    st.set(format!("✅ 매칭 확정! vs {}", opp.name));
-    ctx.goto(Screen::Messages);
-}
-
 #[component]
 pub fn Matching() -> Element {
     let ctx = use_context::<AppCtx>();
@@ -119,24 +73,22 @@ pub fn Matching() -> Element {
 
     let searching = *ctx.searching.read();
     let listings = ctx.listings.read().clone();
-    let outgoing = ctx.outgoing.read().clone();
     let inbox_n = ctx.inbox.read().len();
+    let sent_n = ctx.sent.read().len();
 
     rsx! {
         h1 { class: "h-lg", "스크림 매칭" }
         p { class: "muted", "슬롯·군을 정하고 전 세계 팀을 검색해 스크림을 신청하세요." }
 
-        if inbox_n > 0 {
+        if inbox_n > 0 || sent_n > 0 {
             div { class: "inbox-banner mt-xl",
-                "📩 새 스크림 신청 {inbox_n}건이 도착했습니다."
-                button { class: "btn btn-primary", onclick: move |_| ctx.goto(Screen::Messages), "수신함 열기" }
+                if inbox_n > 0 { "📩 받은 신청 {inbox_n}건" } else { "📨 보낸 신청 {sent_n}건 (수락 대기중)" }
+                button { class: "btn btn-primary", onclick: move |_| ctx.goto(Screen::Messages), "메시지함 열기" }
             }
         }
 
         div { class: "mt-xl",
-            if let Some((_, to)) = outgoing {
-                WaitingCard { opponent: to }
-            } else if searching {
+            if searching {
                 SearchingView { listings }
             } else {
                 SearchForm {}
@@ -267,6 +219,7 @@ fn SearchingView(listings: Vec<Listing>) -> Element {
 fn ListingCard(listing: Listing) -> Element {
     let ctx = use_context::<AppCtx>();
     let flag = flag_for(&listing.region);
+    let applied = ctx.sent.read().iter().any(|l| l.team_id == listing.team_id);
     rsx! {
         div { class: "listing-card",
             TeamLogo { logo: listing.logo.clone(), tag: listing.tag.clone(), size: 40 }
@@ -274,40 +227,27 @@ fn ListingCard(listing: Listing) -> Element {
                 div { class: "lname", "{listing.name}" }
                 div { class: "lregion", "{flag} {listing.region}" }
             }
-            button {
-                class: "btn btn-primary",
-                onclick: {
-                    let opp = listing.clone();
-                    move |_| {
-                        let opp = opp.clone();
-                        let mid = format!("out-{}", opp.team_id);
-                        let mut o = ctx.outgoing; o.set(Some((mid, opp.clone())));
-                        let mut st = ctx.status; st.set("신청이 완료되었습니다 — 상대 수락 대기 중".into());
-                        spawn(async move {
-                            TimeoutFuture::new(1700).await;
-                            if ctx.outgoing.read().is_some() {
-                                confirm(ctx, opp);
+            if applied {
+                button { class: "btn btn-outline", disabled: true, "신청됨 ✓" }
+            } else {
+                button {
+                    class: "btn btn-primary",
+                    onclick: {
+                        let opp = listing.clone();
+                        move |_| {
+                            // 메시지 큐에 전달(실시간 대기 없음). 중복 신청 방지.
+                            let mut s = ctx.sent.read().clone();
+                            if !s.iter().any(|l| l.team_id == opp.team_id) {
+                                s.push(opp.clone());
+                                let mut sent = ctx.sent; sent.set(s);
                             }
-                        });
-                    }
-                },
-                "신청"
+                            let mut st = ctx.status;
+                            st.set(format!("신청이 완료되었습니다 — {} 수신함으로 전달됨", opp.name));
+                        }
+                    },
+                    "신청"
+                }
             }
-        }
-    }
-}
-
-#[component]
-fn WaitingCard(opponent: Listing) -> Element {
-    let ctx = use_context::<AppCtx>();
-    rsx! {
-        div { class: "card center", style: "max-width:420px;margin:0 auto;",
-            TeamLogo { logo: opponent.logo.clone(), tag: opponent.tag.clone(), size: 64 }
-            h3 { class: "h-md", style: "margin:12px 0 4px;", "{opponent.name}" }
-            p { class: "caption", style: "color:var(--primary-deep);font-weight:600;", "신청이 완료되었습니다" }
-            div { class: "spinner-dots", span {} span {} span {} }
-            p { class: "muted", "상대의 수락을 기다리는 중…" }
-            button { class: "btn btn-outline", onclick: move |_| { let mut o = ctx.outgoing; o.set(None); }, "취소" }
         }
     }
 }

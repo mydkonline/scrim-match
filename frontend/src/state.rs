@@ -62,8 +62,8 @@ pub struct AppCtx {
     // ── 매칭 플로우 ──
     pub searching: Signal<bool>,
     pub listings: Signal<Vec<Listing>>,
-    /// 내가 신청 보낸 상태: (match_id, 상대).
-    pub outgoing: Signal<Option<(String, Listing)>>,
+    /// 내가 보낸 신청(메시지 큐 전달, 상대 수락 대기). 실시간 대기 없음.
+    pub sent: Signal<Vec<Listing>>,
     /// 수신함: 들어온 스크림 신청들.
     pub inbox: Signal<Vec<InboxItem>>,
     /// 확정 매칭 대화 스레드들.
@@ -89,7 +89,7 @@ impl AppCtx {
             scrim_region: use_signal(|| Option::<String>::None),
             searching: use_signal(|| false),
             listings: use_signal(Vec::new),
-            outgoing: use_signal(|| Option::<(String, Listing)>::None),
+            sent: use_signal(Vec::new),
             inbox: use_signal(Vec::new),
             threads: use_signal(Vec::new),
             active: use_signal(|| Option::<String>::None),
@@ -107,20 +107,19 @@ impl AppCtx {
         s.set(screen);
     }
 
-    /// 검색 관련 상태만 초기화(수신함·대화는 유지).
+    /// 검색 관련 상태만 초기화(수신함·대화·보낸신청은 유지).
     pub fn reset_search(self) {
         let mut s = self.searching;
         s.set(false);
         let mut l = self.listings;
         l.set(Vec::new());
-        let mut o = self.outgoing;
-        o.set(None);
     }
 
-    /// 수신함 + 열린 대화의 미읽음 합계(네비 배지).
+    /// 수신함 + 보낸 신청 + 열린 대화의 미읽음 합계(네비 배지).
     pub fn unread_count(self) -> usize {
         let inbox = self.inbox.read().len();
+        let sent = self.sent.read().len();
         let threads: u32 = self.threads.read().iter().map(|t| t.unread).sum();
-        inbox + threads as usize
+        inbox + sent + threads as usize
     }
 }

@@ -57,7 +57,7 @@ fn handle_server_msg(ctx: AppCtx, msg: ServerMsg) {
     let mut status = ctx.status;
     let mut my_team = ctx.my_team;
     let mut listings = ctx.listings;
-    let mut outgoing = ctx.outgoing;
+    let mut sent = ctx.sent;
     let mut inbox = ctx.inbox;
     let mut threads = ctx.threads;
     let mut active = ctx.active;
@@ -79,17 +79,21 @@ fn handle_server_msg(ctx: AppCtx, msg: ServerMsg) {
             }
             status.set(format!("📩 {} 가 스크림을 신청했습니다", from.name));
         }
-        ServerMsg::InviteSent { match_id, to } => {
-            outgoing.set(Some((match_id, to)));
+        ServerMsg::InviteSent { to, .. } => {
+            let mut s = sent.read().clone();
+            if !s.iter().any(|l| l.team_id == to.team_id) {
+                s.push(to);
+                sent.set(s);
+            }
         }
         ServerMsg::InviteRejected { .. } => {
-            outgoing.set(None);
             status.set("상대가 신청을 거절했습니다".into());
         }
         ServerMsg::MatchConfirmed { match_id, scrim, opponent } => {
             searching.set(false);
             listings.set(Vec::new());
-            outgoing.set(None);
+            let remaining_sent: Vec<_> = sent.read().clone().into_iter().filter(|l| l.team_id != opponent.team_id).collect();
+            sent.set(remaining_sent);
             // 수신함에서 제거
             let remaining: Vec<_> = inbox.read().clone().into_iter().filter(|i| i.match_id != match_id).collect();
             inbox.set(remaining);
