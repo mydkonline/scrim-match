@@ -56,6 +56,8 @@ pub struct AppCtx {
     pub scrim_date: Signal<String>,
     pub scrim_time: Signal<String>,
     pub scrim_squad: Signal<Squad>,
+    /// 국가(지역) 필터. None = 전체.
+    pub scrim_region: Signal<Option<String>>,
 
     // ── 매칭 플로우 ──
     pub searching: Signal<bool>,
@@ -84,6 +86,7 @@ impl AppCtx {
             scrim_date: use_signal(|| "2026-06-20".to_string()),
             scrim_time: use_signal(|| "19:00".to_string()),
             scrim_squad: use_signal(|| Squad::First),
+            scrim_region: use_signal(|| Option::<String>::None),
             searching: use_signal(|| false),
             listings: use_signal(Vec::new),
             outgoing: use_signal(|| Option::<(String, Listing)>::None),

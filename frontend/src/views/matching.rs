@@ -17,16 +17,35 @@ fn listing_of(t: &Team) -> Listing {
     Listing::from_team(t, false)
 }
 
-/// 같은 종목의 다른 팀 목록(로컬, 연결 무관).
+/// 같은 종목의 다른 팀 목록(로컬, 연결 무관). teams 비어있으면 시드 폴백.
 fn local_listings(ctx: AppCtx) -> Vec<Listing> {
     let game = *ctx.game.read();
     let my_id = ctx.my_team.read().as_ref().map(|t| t.id.clone());
-    ctx.teams
-        .read()
-        .iter()
-        .filter(|t| t.game == game && Some(&t.id) != my_id.as_ref())
+    let region = ctx.scrim_region.read().clone();
+    let teams = ctx.teams.read().clone();
+    let src = if teams.is_empty() { shared::seed::seed_teams() } else { teams };
+    src.iter()
+        .filter(|t| {
+            t.game == game
+                && Some(&t.id) != my_id.as_ref()
+                && region.as_ref().map_or(true, |r| &t.region == r)
+        })
         .map(listing_of)
         .collect()
+}
+
+/// 현재 종목에서 선택 가능한 지역(국가) 목록.
+fn regions_for(ctx: AppCtx) -> Vec<String> {
+    let game = *ctx.game.read();
+    let teams = ctx.teams.read().clone();
+    let src = if teams.is_empty() { shared::seed::seed_teams() } else { teams };
+    let mut regs: Vec<String> = Vec::new();
+    for t in src.iter().filter(|t| t.game == game) {
+        if !regs.contains(&t.region) {
+            regs.push(t.region.clone());
+        }
+    }
+    regs
 }
 
 /// 매칭 확정 처리(로컬): 스레드 생성 후 메시지함으로 이동.
@@ -70,6 +89,34 @@ fn confirm(ctx: AppCtx, opp: Listing) {
 #[component]
 pub fn Matching() -> Element {
     let ctx = use_context::<AppCtx>();
+
+    // 검색 시뮬레이션은 화면이 유지되는 Matching 스코프에서 실행(타이머 취소 방지).
+    use_effect(move || {
+        if *ctx.searching.read() {
+            spawn(async move {
+                TimeoutFuture::new(650).await;
+                if *ctx.searching.read() && ctx.listings.read().is_empty() {
+                    let mut l = ctx.listings;
+                    l.set(local_listings(ctx));
+                }
+                // 잠시 뒤 다른 팀이 나에게 신청(수락/거절 체험용)
+                TimeoutFuture::new(2800).await;
+                if *ctx.searching.read() && ctx.inbox.read().is_empty() {
+                    let cands = local_listings(ctx);
+                    let pick = cands.iter().nth(1).or_else(|| cands.first()).cloned();
+                    if let Some(from) = pick {
+                        let mut ib = ctx.inbox.read().clone();
+                        ib.push(InboxItem { match_id: format!("in-{}", from.team_id), from: from.clone() });
+                        let mut s = ctx.inbox;
+                        s.set(ib);
+                        let mut st = ctx.status;
+                        st.set(format!("📩 {} 가 스크림을 신청했습니다", from.name));
+                    }
+                }
+            });
+        }
+    });
+
     let searching = *ctx.searching.read();
     let listings = ctx.listings.read().clone();
     let outgoing = ctx.outgoing.read().clone();
@@ -103,8 +150,10 @@ fn SearchForm() -> Element {
     let ctx = use_context::<AppCtx>();
     let mut date = ctx.scrim_date;
     let mut time = ctx.scrim_time;
-    let mut squad = ctx.scrim_squad;
+    let squad = ctx.scrim_squad;
     let cur_squad = *squad.read();
+    let cur_region = ctx.scrim_region.read().clone();
+    let regions = regions_for(ctx);
 
     rsx! {
         div { class: "card", style: "max-width:460px;margin:0 auto;",
@@ -117,6 +166,23 @@ fn SearchForm() -> Element {
                 div { class: "field", style: "margin:0;",
                     label { "TIME" }
                     input { class: "input", r#type: "time", value: "{time}", oninput: move |e| time.set(e.value()) }
+                }
+            }
+            // 국가(지역) 필터
+            div { class: "field", style: "margin-top:12px;margin-bottom:0;",
+                label { "국가 / 리그" }
+                select {
+                    class: "select",
+                    onchange: move |e| {
+                        let v = e.value();
+                        let mut r = ctx.scrim_region;
+                        r.set(if v.is_empty() { None } else { Some(v) });
+                    },
+                    option { value: "", selected: cur_region.is_none(), "🌐 전 세계 전체" }
+                    for reg in regions.iter() {
+                        option { key: "{reg}", value: "{reg}", selected: cur_region.as_deref() == Some(reg.as_str()),
+                            "{flag_for(reg)} {reg}" }
+                    }
                 }
             }
             // 1군 / 2군 / Academy 선택
@@ -132,29 +198,10 @@ fn SearchForm() -> Element {
                 class: "btn btn-primary btn-block",
                 style: "margin-top:16px;",
                 onclick: move |_| {
-                    let mut s = ctx.searching;
-                    s.set(true);
                     let mut l = ctx.listings;
                     l.set(Vec::new());
-                    // 로컬 검색 시뮬레이션: 연결 연출 후 리스트 표시 + 데모 수신 신청
-                    spawn(async move {
-                        TimeoutFuture::new(1000).await;
-                        if !*ctx.searching.read() { return; }
-                        let mut l = ctx.listings;
-                        l.set(local_listings(ctx));
-                        // 잠시 뒤 다른 팀이 나에게 신청(수락/거절 체험용)
-                        TimeoutFuture::new(2600).await;
-                        if !*ctx.searching.read() { return; }
-                        if ctx.inbox.read().is_empty() {
-                            let cands = local_listings(ctx);
-                            if let Some(from) = cands.into_iter().next() {
-                                let mut ib = ctx.inbox.read().clone();
-                                ib.push(InboxItem { match_id: format!("in-{}", from.team_id), from: from.clone() });
-                                let mut s = ctx.inbox; s.set(ib);
-                                let mut st = ctx.status; st.set(format!("📩 {} 가 스크림을 신청했습니다 — 메시지함 확인", from.name));
-                            }
-                        }
-                    });
+                    let mut s = ctx.searching;
+                    s.set(true);
                 },
                 "🔍 스크림 상대 찾기"
             }

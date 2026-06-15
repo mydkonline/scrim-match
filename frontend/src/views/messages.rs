@@ -3,7 +3,7 @@ use gloo_timers::future::TimeoutFuture;
 use shared::{Listing, MatchStatus, ScrimMatch};
 
 use crate::state::{AppCtx, ChatMsg, Thread};
-use crate::views::TeamLogo;
+use crate::views::{flag_for, TeamLogo};
 
 fn mock_code(seed: &str) -> String {
     let mut h: u32 = 5381;
@@ -55,9 +55,14 @@ fn accept_invite(ctx: AppCtx, match_id: &str, from: &Listing) {
 #[component]
 pub fn Messages() -> Element {
     let ctx = use_context::<AppCtx>();
-    let inbox = ctx.inbox.read().clone();
-    let threads = ctx.threads.read().clone();
+    let mut query = use_signal(String::new);
+    let q = query.read().to_lowercase();
+    let inbox: Vec<_> = ctx.inbox.read().clone().into_iter()
+        .filter(|i| q.is_empty() || i.from.name.to_lowercase().contains(&q)).collect();
+    let threads: Vec<_> = ctx.threads.read().clone().into_iter()
+        .filter(|t| q.is_empty() || t.opponent.name.to_lowercase().contains(&q)).collect();
     let active = ctx.active.read().clone();
+    let total_n = ctx.inbox.read().len() + ctx.threads.read().len();
     // 수신함에서 선택한 신청(있으면 우측에 수락/거절 표시).
     let mut sel_inbox = use_signal(|| Option::<String>::None);
     let sel = sel_inbox.read().clone();
@@ -66,7 +71,19 @@ pub fn Messages() -> Element {
         div { class: "msg-dashboard",
             // ── 좌측: 목록 ──
             aside { class: "msg-list",
-                h2 { class: "msg-title", "Messages" }
+                div { class: "msg-list-head",
+                    h2 { class: "msg-title", "Messages" }
+                    if total_n > 0 { span { class: "msg-count", "{total_n}" } }
+                }
+                div { class: "msg-search",
+                    span { class: "msg-search-ico", "🔍" }
+                    input {
+                        class: "msg-search-input",
+                        placeholder: "팀 검색…",
+                        value: "{query}",
+                        oninput: move |e| query.set(e.value()),
+                    }
+                }
 
                 if !inbox.is_empty() {
                     div { class: "msg-section", "📩 수신함 (스크림 신청)" }
@@ -83,7 +100,7 @@ pub fn Messages() -> Element {
                                     TeamLogo { logo: item.from.logo.clone(), tag: item.from.tag.clone(), size: 44 }
                                     div { class: "msg-item-meta",
                                         div { class: "msg-item-name", "{item.from.name}" }
-                                        div { class: "msg-item-sub", "스크림 신청 · {item.from.region}" }
+                                        div { class: "msg-item-sub", "{flag_for(&item.from.region)} {item.from.region} · 스크림 신청" }
                                     }
                                     span { class: "badge-new", "NEW" }
                                 }
@@ -111,9 +128,12 @@ pub fn Messages() -> Element {
                                     if let Some(x) = th.iter_mut().find(|x| x.match_id == mid) { x.unread = 0; }
                                     let mut ts = ctx.threads; ts.set(th);
                                 },
-                                TeamLogo { logo: t.opponent.logo.clone(), tag: t.opponent.tag.clone(), size: 44 }
+                                div { class: "msg-ava-wrap",
+                                    TeamLogo { logo: t.opponent.logo.clone(), tag: t.opponent.tag.clone(), size: 44 }
+                                    span { class: "online-dot" }
+                                }
                                 div { class: "msg-item-meta",
-                                    div { class: "msg-item-name", "{t.opponent.name}" }
+                                    div { class: "msg-item-name", "{flag_for(&t.opponent.region)} {t.opponent.name}" }
                                     div { class: "msg-item-sub", "{last}" }
                                 }
                                 if t.unread > 0 { span { class: "badge-unread", "{t.unread}" } }
