@@ -36,6 +36,10 @@ const PLAYER_PHOTOS: &[&str] = &[
     "redbert.jpg","rest.jpg","rich.jpg","roamer.jpg","robo.jpeg","route.jpg","showmaker.jpeg","siwoo.jpeg",
     "steal.jpg","tarzan.jpg","tatu.jpeg","thanatos.jpg","theshy.jpg","tinowns.jpeg","titan.jpg","viper.jpg",
     "vulcan.jpg","wei.jpg","wizer.jpg","xiaohu.jpg","yike.jpg","zeka.jpg","zeus.jpg","zven.jpg",
+    // BNK FEARX / BRION / Nongshim / DN SOOPers 실로스터
+    "andil.jpg","berserker.jpg","bulldog.jpg","clear.jpg","diable.jpg","dndn.jpg","dudu.jpg","fisher.jpg",
+    "gideon.jpg","hena.jpg","jiwoo.jpg","kael.jpg","karis.jpg","kellin.jpg","morgan.jpg","peter.jpg",
+    "pollu.jpg","umti.jpg","vicla.jpg","youngjae.jpeg",
 ];
 
 fn sanitize_key(name: &str) -> String {

@@ -127,26 +127,25 @@ pub fn seed_teams() -> Vec<Team> {
             "DK Mgmt", &["Daeny", "Hirit"],
             &["Siwoo", "Lucid", "ShowMaker", "Aiming", "BeryL"], &LOL_ROLES,
         ),
-        // 로스터 미정 팀(플레이스홀더 핸들 — 추후 실제 로스터로 교체).
         team(
             "bnk-lol", "BNK FEARX", "BFX", Game::Lol, "LCK",
             "BFX Mgmt", &["Coach"],
-            &["bfxTop", "bfxJgl", "bfxMid", "bfxBot", "bfxSup"], &LOL_ROLES,
+            &["Clear", "GIDEON", "VicLa", "Diable", "Kellin"], &LOL_ROLES,
         ),
         team(
             "brion-lol", "Hanjin BRION", "BRO", Game::Lol, "LCK",
             "BRO Mgmt", &["Coach"],
-            &["broTop", "broJgl", "broMid", "broBot", "broSup"], &LOL_ROLES,
+            &["Morgan", "UmTi", "Karis", "Hena", "Pollu"], &LOL_ROLES,
         ),
         team(
             "ns-lol", "Nongshim RedForce", "NS", Game::Lol, "LCK",
             "NS Mgmt", &["Coach"],
-            &["nsTop", "nsJgl", "nsMid", "nsBot", "nsSup"], &LOL_ROLES,
+            &["DnDn", "Kael", "Fisher", "Jiwoo", "Peter"], &LOL_ROLES,
         ),
         team(
             "dns-lol", "DN SOOPers", "DNS", Game::Lol, "LCK",
             "DNS Mgmt", &["Coach"],
-            &["dnsTop", "dnsJgl", "dnsMid", "dnsBot", "dnsSup"], &LOL_ROLES,
+            &["DuDu", "YoungJae", "BuLLDoG", "Berserker", "Andil"], &LOL_ROLES,
         ),
         // ───────── 글로벌 LoL (국가별) ─────────
         team("blg-lol", "Bilibili Gaming", "BLG", Game::Lol, "LPL", "BLG Mgmt", &["Coach"],
