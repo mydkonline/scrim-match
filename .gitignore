@@ -1,0 +1,7 @@
+/target
+**/target
+/frontend/dist
+dist
+.DS_Store
+*.log
+.env

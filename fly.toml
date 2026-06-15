@@ -1,0 +1,20 @@
+# Fly.io 배포용 설정. `fly launch --no-deploy` 후 `fly deploy` 로 사용.
+# (실시간 매칭 백엔드는 GitHub Pages 가 아닌 이런 상주 호스트가 필요합니다.)
+app = "scrim-gg"
+primary_region = "nrt"   # Tokyo
+
+[build]
+  dockerfile = "backend/Dockerfile"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+
+[[http_service.checks]]
+  method = "get"
+  path = "/api/health"
+  interval = "15s"
+  timeout = "2s"

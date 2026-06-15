@@ -1,0 +1,17 @@
+[workspace]
+resolver = "2"
+members = ["shared", "backend", "frontend"]
+
+# 주의: frontend 는 wasm32 전용 의존성을 사용하므로
+#   - 백엔드:  cargo build -p backend
+#   - 프론트:  trunk build   (frontend 디렉터리에서)
+# 처럼 타깃별로 따로 빌드합니다. `cargo build --workspace` 는 사용하지 않습니다.
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
