@@ -77,6 +77,25 @@ Client ──Apply{match_id}───────────▶ Server
         ◀── MatchUpdate{Confirmed} ──         (양쪽 수락 → 확정, 두 팀만 코드 공유)
 ```
 
+## 터미널 CLI (브라우저 없이 신청 수신/수락)
+
+브라우저를 켜지 않아도 터미널에서 스크림 신청을 받고 수락할 수 있습니다. 접속 시 메시지 큐에 쌓인 신청이 전달됩니다.
+
+```bash
+# 우리 팀으로 접속(시리얼은 팀ID로 자동 계산, 다른 서버는 --url 로)
+cargo run -p cli -- --team bnk-lol
+#   옵션: --game lol|val|sc  --serial <코드>  --url wss://scrim-gg.fly.dev/ws
+
+# 접속 후 명령
+#   list                 받은 신청 목록(코드)
+#   accept <code>        코드로 신청 수락 → 매칭 확정
+#   apply <teamId>       상대 팀에 스크림 신청(코드 발급)
+#   chat <id> <메시지>   확정 매칭에 채팅
+#   quit                 종료
+```
+
+예: 다른 팀이 `apply bnk-lol` 로 신청 → 그 팀은 코드를 받고, BNK는 (나중에 켜도) `list` → `accept <code>` 로 확정.
+
 ## TODO (배포 후 개선)
 - [ ] 시리얼 코드 → 팀 매핑 및 실제 인증/권한
 - [ ] DB(Postgres) 연동, 인메모리 상태 대체
