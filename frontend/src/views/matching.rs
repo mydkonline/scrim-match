@@ -97,27 +97,56 @@ fn SearchForm() -> Element {
 #[component]
 fn SearchingView(listings: Vec<Listing>) -> Element {
     let ctx = use_context::<AppCtx>();
+    let found = !listings.is_empty();
     rsx! {
         div { class: "search-wrap",
-            div { class: "globe", "🌐" }
-            p { class: "h-md center", "전 세계 상대 검색 중…" }
-            p { class: "caption center", "스크림 가능한 팀이 실시간으로 표시됩니다" }
-            button {
-                class: "btn btn-outline",
-                style: "display:block;margin:12px auto;",
-                onclick: move |_| {
-                    let mut s = ctx.searching;
-                    s.set(false);
-                    ctx.send(ClientMsg::StopSearch);
-                },
-                "검색 취소"
-            }
-            if listings.is_empty() {
+            if !found {
+                // ── 검색 중 ──
+                div { class: "globe", "🌐" }
+                p { class: "h-md center", "전 세계 상대 검색 중…" }
+                p { class: "caption center", "스크림 가능한 팀이 실시간으로 표시됩니다" }
+                button {
+                    class: "btn btn-outline",
+                    style: "display:block;margin:12px auto;",
+                    onclick: move |_| {
+                        let mut s = ctx.searching;
+                        s.set(false);
+                        ctx.send(ClientMsg::StopSearch);
+                    },
+                    "검색 취소"
+                }
                 p { class: "caption center", style: "margin-top:8px;", "상대를 찾는 중…" }
             } else {
-                div { class: "listing-grid",
-                    for l in listings.iter() {
-                        ListingCard { listing: l.clone() }
+                // ── 상대 발견 → 연결 과정 (CSS 연출) ──
+                div { class: "connect-seq",
+                    div { class: "connect-globe", "🌐" }
+                    div { class: "connect-check", "✓" }
+                    p { class: "h-md center", style: "margin:8px 0 2px;", "상대를 찾았습니다!" }
+                    div { class: "connect-steps",
+                        div { class: "cstep s1", span { class: "ci", "🔐" } "보안 채널 수립" span { class: "cok", "✓" } }
+                        div { class: "cstep s2", span { class: "ci", "🤝" } "핸드셰이크" span { class: "cok", "✓" } }
+                        div { class: "cstep s3", span { class: "ci", "🌐" } "상대 서버 연결" span { class: "cok", "✓" } }
+                    }
+                    div { class: "connect-bar", div { class: "connect-bar-fill" } }
+                }
+
+                // 연결 연출 후 페이드인되는 리스트
+                div { class: "listing-reveal",
+                    p { class: "caption center", style: "margin-bottom:8px;", "🌐 연결됨 · 스크림 가능한 팀" }
+                    div { class: "listing-grid",
+                        for l in listings.iter() {
+                            ListingCard { listing: l.clone() }
+                        }
+                    }
+                    button {
+                        class: "btn btn-outline",
+                        style: "display:block;margin:16px auto 0;",
+                        onclick: move |_| {
+                            let mut s = ctx.searching;
+                            s.set(false);
+                            ctx.send(ClientMsg::StopSearch);
+                        },
+                        "검색 취소"
                     }
                 }
             }

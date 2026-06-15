@@ -273,7 +273,40 @@ input, select { font-family: var(--font); }
 }
 @keyframes spin { from { transform: rotate(0); } to { transform: rotate(360deg); } }
 
-.listing-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: var(--s-md); margin-top: var(--s-xl); text-align: left; }
+/* ── 상대 발견 → 연결 연출 ── */
+.connect-seq { text-align: center; padding: 12px 0 4px; animation: conn-collapse 0.5s ease 2.6s forwards; overflow: hidden; }
+.connect-globe { font-size: 56px; display: inline-block; animation: spin 1s linear infinite, globe-out 0.4s ease 0.5s forwards; }
+.connect-check {
+  font-size: 40px; color: var(--primary-deep); font-weight: 700;
+  height: 0; opacity: 0; transform: scale(0.4);
+  animation: check-in 0.4s cubic-bezier(0.2,0.8,0.3,1.3) 0.55s forwards;
+}
+@keyframes globe-out { to { opacity: 0; height: 0; transform: scale(0.4); } }
+@keyframes check-in { to { opacity: 1; transform: scale(1); height: auto; } }
+@keyframes conn-collapse { to { opacity: 0; max-height: 0; padding: 0; margin: 0; } }
+
+.connect-steps { display: inline-flex; flex-direction: column; gap: 8px; margin: 10px 0; text-align: left; }
+.cstep {
+  display: flex; align-items: center; gap: 8px; font-size: 14px; color: var(--ink-mute);
+  opacity: 0; transform: translateX(-8px);
+  animation: step-in 0.3s ease forwards;
+}
+.cstep .ci { font-size: 16px; }
+.cstep .cok { color: var(--primary-deep); font-weight: 700; opacity: 0; margin-left: auto; animation: ok-in 0.2s ease forwards; }
+.cstep.s1 { animation-delay: 0.7s; } .cstep.s1 .cok { animation-delay: 1.1s; }
+.cstep.s2 { animation-delay: 1.2s; } .cstep.s2 .cok { animation-delay: 1.6s; }
+.cstep.s3 { animation-delay: 1.7s; } .cstep.s3 .cok { animation-delay: 2.1s; }
+@keyframes step-in { to { opacity: 1; transform: translateX(0); color: var(--ink); } }
+@keyframes ok-in { to { opacity: 1; } }
+
+.connect-bar { width: 240px; height: 4px; border-radius: var(--r-full); background: var(--hairline-cool); margin: 6px auto 0; overflow: hidden; }
+.connect-bar-fill { height: 100%; width: 0; background: var(--primary); animation: bar-fill 2.2s ease forwards; }
+@keyframes bar-fill { to { width: 100%; } }
+
+.listing-reveal { opacity: 0; animation: reveal-in 0.5s ease 2.7s forwards; }
+@keyframes reveal-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+
+.listing-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: var(--s-md); margin-top: var(--s-md); text-align: left; }
 .listing-card {
   display: flex; align-items: center; gap: var(--s-md);
   border: 1px solid var(--hairline); border-radius: var(--r-md); padding: 12px 14px; background: var(--canvas);
