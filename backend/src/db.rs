@@ -47,8 +47,9 @@ fn status_to_str(s: MatchStatus) -> &'static str {
 const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS teams (
   id text PRIMARY KEY, name text NOT NULL, tag text NOT NULL,
-  game text NOT NULL, region text NOT NULL, manager text NOT NULL
+  game text NOT NULL, region text NOT NULL, manager text NOT NULL, logo text
 );
+ALTER TABLE teams ADD COLUMN IF NOT EXISTS logo text;
 CREATE TABLE IF NOT EXISTS coaches (
   team_id text NOT NULL, idx int NOT NULL, name text NOT NULL,
   PRIMARY KEY (team_id, idx)
@@ -67,40 +68,48 @@ CREATE TABLE IF NOT EXISTS matches (
 pub async fn init(url: &str) -> Result<PgPool, sqlx::Error> {
     let pool = PgPoolOptions::new().max_connections(5).connect(url).await?;
     sqlx::raw_sql(SCHEMA).execute(&pool).await?;
-    seed_if_empty(&pool).await?;
+    sync_seed(&pool).await?;
     Ok(pool)
 }
 
-async fn seed_if_empty(pool: &PgPool) -> Result<(), sqlx::Error> {
-    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM teams").fetch_one(pool).await?;
-    if count > 0 {
-        return Ok(());
-    }
-    // 원자적 시드: 중간 실패 시 전체 롤백(부분 적재 방지).
+/// 코드의 시드를 DB에 동기화(upsert). 시드 데이터가 바뀌면 부팅 시 반영된다.
+/// (확정 매칭 `matches` 는 건드리지 않음.)
+async fn sync_seed(pool: &PgPool) -> Result<(), sqlx::Error> {
     let mut tx = pool.begin().await?;
     for t in shared::seed::seed_teams() {
-        sqlx::query("INSERT INTO teams(id,name,tag,game,region,manager) VALUES($1,$2,$3,$4,$5,$6)")
-            .bind(&t.id).bind(&t.name).bind(&t.tag)
-            .bind(game_to_str(t.game)).bind(&t.region).bind(&t.staff.manager)
-            .execute(&mut *tx).await?;
+        sqlx::query(
+            "INSERT INTO teams(id,name,tag,game,region,manager,logo) VALUES($1,$2,$3,$4,$5,$6,$7) \
+             ON CONFLICT(id) DO UPDATE SET name=EXCLUDED.name, tag=EXCLUDED.tag, game=EXCLUDED.game, \
+             region=EXCLUDED.region, manager=EXCLUDED.manager, logo=EXCLUDED.logo",
+        )
+        .bind(&t.id).bind(&t.name).bind(&t.tag)
+        .bind(game_to_str(t.game)).bind(&t.region).bind(&t.staff.manager).bind(&t.logo)
+        .execute(&mut *tx).await?;
         for (i, c) in t.staff.coaches.iter().enumerate() {
-            sqlx::query("INSERT INTO coaches(team_id,idx,name) VALUES($1,$2,$3)")
-                .bind(&t.id).bind(i as i32).bind(c)
-                .execute(&mut *tx).await?;
+            sqlx::query(
+                "INSERT INTO coaches(team_id,idx,name) VALUES($1,$2,$3) \
+                 ON CONFLICT(team_id,idx) DO UPDATE SET name=EXCLUDED.name",
+            )
+            .bind(&t.id).bind(i as i32).bind(c)
+            .execute(&mut *tx).await?;
         }
         for p in &t.roster {
-            sqlx::query("INSERT INTO players(id,team_id,name,role,squad) VALUES($1,$2,$3,$4,$5)")
-                .bind(&p.id).bind(&t.id).bind(&p.name).bind(&p.role).bind(squad_to_str(p.squad))
-                .execute(&mut *tx).await?;
+            sqlx::query(
+                "INSERT INTO players(id,team_id,name,role,squad) VALUES($1,$2,$3,$4,$5) \
+                 ON CONFLICT(id) DO UPDATE SET team_id=EXCLUDED.team_id, name=EXCLUDED.name, \
+                 role=EXCLUDED.role, squad=EXCLUDED.squad",
+            )
+            .bind(&p.id).bind(&t.id).bind(&p.name).bind(&p.role).bind(squad_to_str(p.squad))
+            .execute(&mut *tx).await?;
         }
     }
     tx.commit().await?;
-    tracing::info!("seeded teams into Postgres");
+    tracing::info!("synced seed teams into Postgres");
     Ok(())
 }
 
 pub async fn load_teams(pool: &PgPool) -> Vec<Team> {
-    let trows = sqlx::query("SELECT id,name,tag,game,region,manager FROM teams ORDER BY id")
+    let trows = sqlx::query("SELECT id,name,tag,game,region,manager,logo FROM teams ORDER BY id")
         .fetch_all(pool).await.unwrap_or_default();
     let crows = sqlx::query("SELECT team_id,name FROM coaches ORDER BY team_id,idx")
         .fetch_all(pool).await.unwrap_or_default();
@@ -132,6 +141,7 @@ pub async fn load_teams(pool: &PgPool) -> Vec<Team> {
                 tag: tr.get("tag"),
                 game: str_to_game(&tr.get::<String, _>("game")),
                 region: tr.get("region"),
+                logo: tr.get("logo"),
                 staff: Staff { manager: tr.get("manager"), coaches },
                 roster,
             }

@@ -25,38 +25,38 @@ use axum::{
 };
 use futures::{SinkExt, StreamExt};
 use shared::{
-    CalendarEntry, ClientMsg, Game, MatchStatus, ScrimMatch, ServerMsg, Team,
+    CalendarEntry, ClientMsg, Game, Listing, MatchStatus, ScrimMatch, ServerMsg, Team,
 };
+use std::time::Duration;
 use tokio::sync::mpsc::{self, UnboundedSender};
 use tower_http::cors::{Any, CorsLayer};
 use uuid::Uuid;
 
-/// 대기열 한 칸: 어떤 팀이 어떤 슬롯(종목·날짜·시간)을 찾는지.
+/// 검색 풀 한 칸: 어떤 팀이 어떤 슬롯을 찾는지.
 #[derive(Clone)]
-struct QueueEntry {
+struct PoolEntry {
     team_id: String,
     game: Game,
     date: String,
     time: String,
-    /// 같은 지역만 원할 때의 필터.
     region: Option<String>,
-    /// 지정 스크림: 이 팀하고만 매칭.
-    target: Option<String>,
 }
 
-/// 진행 중인 매칭 레코드. 양쪽 수락 여부를 추적.
-struct MatchRecord {
+/// 진행 중(Pending)/확정 매칭. 신청자→피신청자.
+#[derive(Clone)]
+struct MatchRec {
     scrim: ScrimMatch,
-    accepted_a: bool,
-    accepted_b: bool,
+    inviter: String,
+    invitee: String,
 }
 
 #[derive(Default)]
 struct Inner {
     /// team_id → 그 팀 소켓으로 메시지를 흘려보내는 송신부.
     clients: HashMap<String, UnboundedSender<ServerMsg>>,
-    queue: Vec<QueueEntry>,
-    matches: HashMap<String, MatchRecord>,
+    /// 현재 스크림 상대를 찾는 팀들.
+    pool: Vec<PoolEntry>,
+    matches: HashMap<String, MatchRec>,
 }
 
 struct AppState {
@@ -191,11 +191,198 @@ fn send_to(inner: &Inner, team_id: &str, msg: ServerMsg) {
     }
 }
 
+fn region_ok(
+    my_region: Option<&str>,
+    my_filter: &Option<String>,
+    other_region: Option<&str>,
+    other_filter: &Option<String>,
+) -> bool {
+    if let Some(r) = my_filter {
+        if other_region != Some(r.as_str()) {
+            return false;
+        }
+    }
+    if let Some(r) = other_filter {
+        if my_region != Some(r.as_str()) {
+            return false;
+        }
+    }
+    true
+}
+
+/// 특정 검색자 기준으로 같은 슬롯의 실제 검색 팀 + 데모 봇 목록을 만든다.
+fn compute_listings(state: &Shared, inner: &Inner, me: &PoolEntry) -> Vec<Listing> {
+    let my_region = state.find_team(&me.team_id).map(|t| t.region);
+    let mut out = Vec::new();
+
+    for q in &inner.pool {
+        if q.team_id == me.team_id || q.game != me.game || q.date != me.date || q.time != me.time {
+            continue;
+        }
+        let q_region = state.find_team(&q.team_id).map(|t| t.region);
+        if !region_ok(my_region.as_deref(), &me.region, q_region.as_deref(), &q.region) {
+            continue;
+        }
+        if let Some(t) = state.find_team(&q.team_id) {
+            out.push(Listing::from_team(&t, !inner.clients.contains_key(&q.team_id)));
+        }
+    }
+
+    // 데모 봇: 같은 종목의 시드 팀(접속/검색중 아님) 최대 6팀.
+    let mut demo = 0;
+    for t in &state.teams {
+        if demo >= 6 {
+            break;
+        }
+        if t.game != me.game || t.id == me.team_id {
+            continue;
+        }
+        if inner.clients.contains_key(&t.id) || inner.pool.iter().any(|q| q.team_id == t.id) {
+            continue;
+        }
+        if let Some(r) = &me.region {
+            if &t.region != r {
+                continue;
+            }
+        }
+        out.push(Listing::from_team(t, true));
+        demo += 1;
+    }
+    out
+}
+
+/// 풀이 바뀔 때 검색 중인 모든 실제 클라이언트에 개인화된 리스트를 푸시.
+fn broadcast_lists(state: &Shared, inner: &Inner) {
+    let pool = inner.pool.clone();
+    for entry in &pool {
+        if !inner.clients.contains_key(&entry.team_id) {
+            continue;
+        }
+        let listings = compute_listings(state, inner, entry);
+        send_to(inner, &entry.team_id, ServerMsg::ScrimList { listings });
+    }
+}
+
+/// 매칭을 확정 처리하고 양쪽(실 접속자)에 MatchConfirmed 전송, 풀에서 제거.
+fn confirm_and_notify(state: &Shared, inner: &mut Inner, match_id: &str) -> Option<ScrimMatch> {
+    let (scrim, inviter, invitee) = {
+        let rec = inner.matches.get_mut(match_id)?;
+        rec.scrim.status = MatchStatus::Confirmed;
+        (rec.scrim.clone(), rec.inviter.clone(), rec.invitee.clone())
+    };
+    let invitee_live = inner.clients.contains_key(&invitee);
+    let inviter_live = inner.clients.contains_key(&inviter);
+    if let Some(t) = state.find_team(&invitee) {
+        send_to(inner, &inviter, ServerMsg::MatchConfirmed {
+            match_id: match_id.to_string(),
+            scrim: scrim.clone(),
+            opponent: Listing::from_team(&t, !invitee_live),
+        });
+    }
+    if let Some(t) = state.find_team(&inviter) {
+        send_to(inner, &invitee, ServerMsg::MatchConfirmed {
+            match_id: match_id.to_string(),
+            scrim: scrim.clone(),
+            opponent: Listing::from_team(&t, !inviter_live),
+        });
+    }
+    inner.pool.retain(|q| q.team_id != inviter && q.team_id != invitee);
+    Some(scrim)
+}
+
+fn persist(state: &Shared, scrim: ScrimMatch) {
+    if let Some(pool) = state.pool.clone() {
+        tokio::spawn(async move { db::persist_match(&pool, &scrim).await; });
+    }
+}
+
+/// 데모: 검색 시작 후 잠시 뒤 시드 팀이 사용자에게 스크림을 신청(수락/거절 체험용).
+fn schedule_demo_invite(
+    state: Shared,
+    my_id: String,
+    game: Game,
+    date: String,
+    time: String,
+    region: Option<String>,
+) {
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(3200)).await;
+        let mut inner = state.inner.lock().unwrap();
+        if !inner.pool.iter().any(|q| q.team_id == my_id) {
+            return; // 검색 중단됨
+        }
+        if inner.matches.values().any(|r| r.inviter == my_id || r.invitee == my_id) {
+            return; // 이미 진행 중인 매칭 있음
+        }
+        let pick = state
+            .teams
+            .iter()
+            .find(|t| {
+                t.game == game
+                    && t.id != my_id
+                    && !inner.clients.contains_key(&t.id)
+                    && !inner.pool.iter().any(|q| q.team_id == t.id)
+                    && region.as_ref().map_or(true, |r| &t.region == r)
+            })
+            .cloned();
+        if let Some(d) = pick {
+            let match_id = Uuid::new_v4().to_string();
+            let scrim = ScrimMatch {
+                id: match_id.clone(),
+                team_a: d.id.clone(),
+                team_b: my_id.clone(),
+                game,
+                date,
+                time,
+                code: gen_code(),
+                status: MatchStatus::Pending,
+            };
+            inner.matches.insert(match_id.clone(), MatchRec { scrim, inviter: d.id.clone(), invitee: my_id.clone() });
+            send_to(&inner, &my_id, ServerMsg::InviteIncoming { match_id, from: Listing::from_team(&d, true) });
+        }
+    });
+}
+
+/// 데모: 사용자가 봇에게 신청하면 잠시 뒤 자동 수락.
+fn schedule_demo_accept(state: Shared, match_id: String) {
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(1800)).await;
+        let mut inner = state.inner.lock().unwrap();
+        let scrim = confirm_and_notify(&state, &mut inner, &match_id);
+        broadcast_lists(&state, &inner);
+        drop(inner);
+        if let Some(s) = scrim {
+            persist(&state, s);
+        }
+    });
+}
+
+/// 데모: 봇 상대에게 보낸 채팅에 자동 응답.
+fn schedule_demo_chat(state: Shared, match_id: String, demo_team: String, user_team: String) {
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(1300)).await;
+        let inner = state.inner.lock().unwrap();
+        let name = state.find_team(&demo_team).map(|t| t.name).unwrap_or_else(|| demo_team.clone());
+        let replies = [
+            "좋습니다! 그 시간 가능합니다 👍",
+            "콜! 디스코드로 바로 들어갈게요",
+            "오케이, 풀 5인 준비됐습니다",
+            "넵 그때 봬요. 코드 확인했습니다",
+        ];
+        let idx = match_id.bytes().map(|b| b as usize).sum::<usize>() % replies.len();
+        send_to(&inner, &user_team, ServerMsg::Chat {
+            match_id: match_id.clone(),
+            from_team: demo_team.clone(),
+            from_name: name,
+            text: replies[idx].to_string(),
+        });
+    });
+}
+
 async fn handle_socket(socket: WebSocket, state: Shared) {
     let (mut sink, mut stream) = socket.split();
     let (tx, mut rx) = mpsc::unbounded_channel::<ServerMsg>();
 
-    // 서버 → 클라이언트 송신 펌프.
     let send_task = tokio::spawn(async move {
         while let Some(msg) = rx.recv().await {
             let txt = match serde_json::to_string(&msg) {
@@ -208,7 +395,6 @@ async fn handle_socket(socket: WebSocket, state: Shared) {
         }
     });
 
-    // 이 소켓이 인증한 팀 정보.
     let mut me: Option<(String, Game)> = None;
 
     while let Some(Ok(msg)) = stream.next().await {
@@ -217,22 +403,16 @@ async fn handle_socket(socket: WebSocket, state: Shared) {
             Message::Close(_) => break,
             _ => continue,
         };
-
         let client_msg: ClientMsg = match serde_json::from_str(&text) {
             Ok(m) => m,
             Err(e) => {
-                let inner = state.inner.lock().unwrap();
-                if let Some((id, _)) = &me {
-                    send_to(&inner, id, ServerMsg::Error { message: format!("bad message: {e}") });
-                }
-                drop(inner);
+                let _ = tx.send(ServerMsg::Error { message: format!("bad message: {e}") });
                 continue;
             }
         };
 
         match client_msg {
             ClientMsg::Hello { serial, team_id, game } => {
-                // 비밀 보장: 시리얼 코드가 해당 팀의 공식 코드와 일치해야 접속 가능.
                 if serial.trim() != shared::serial_for(&team_id) {
                     let _ = tx.send(ServerMsg::Error { message: "시리얼 코드가 팀과 일치하지 않습니다".into() });
                     continue;
@@ -250,135 +430,129 @@ async fn handle_socket(socket: WebSocket, state: Shared) {
                 tracing::info!("team {team_id} authenticated for {:?}", game);
             }
 
-            ClientMsg::FindScrim { date, time, region, target_team: target } => {
+            ClientMsg::Search { date, time, region } => {
                 let Some((my_id, my_game)) = me.clone() else {
                     let _ = tx.send(ServerMsg::Error { message: "먼저 Hello 로 인증하세요".into() });
                     continue;
                 };
-                let my_region = state.find_team(&my_id).map(|t| t.region);
-                let mut inner = state.inner.lock().unwrap();
-
-                // 같은 슬롯 + 필터 조건을 만족하는 다른 팀이 대기열에 있나?
-                let opponent_pos = inner.queue.iter().position(|q| {
-                    if q.game != my_game || q.date != date || q.time != time || q.team_id == my_id {
-                        return false;
-                    }
-                    // 지정 스크림: 내 target 이 있으면 상대가 그 팀이어야 하고,
-                    // 상대의 target 이 있으면 그게 나여야 한다.
-                    if let Some(t) = &target {
-                        if &q.team_id != t {
-                            return false;
-                        }
-                    }
-                    if let Some(t) = &q.target {
-                        if t != &my_id {
-                            return false;
-                        }
-                    }
-                    // 지역 필터: 양쪽 중 하나라도 region 을 걸면 상대 지역과 일치해야 한다.
-                    let opp_region = state.find_team(&q.team_id).map(|t| t.region);
-                    if let Some(r) = &region {
-                        if opp_region.as_deref() != Some(r.as_str()) {
-                            return false;
-                        }
-                    }
-                    if let Some(r) = &q.region {
-                        if my_region.as_deref() != Some(r.as_str()) {
-                            return false;
-                        }
-                    }
-                    true
-                });
-
-                if let Some(pos) = opponent_pos {
-                    let opp = inner.queue.remove(pos);
-                    let scrim = ScrimMatch {
-                        id: Uuid::new_v4().to_string(),
-                        team_a: opp.team_id.clone(),
-                        team_b: my_id.clone(),
+                {
+                    let mut inner = state.inner.lock().unwrap();
+                    inner.pool.retain(|q| q.team_id != my_id);
+                    inner.pool.push(PoolEntry {
+                        team_id: my_id.clone(),
                         game: my_game,
                         date: date.clone(),
                         time: time.clone(),
-                        code: gen_code(),
-                        status: MatchStatus::Pending,
-                    };
-                    inner.matches.insert(
-                        scrim.id.clone(),
-                        MatchRecord { scrim: scrim.clone(), accepted_a: false, accepted_b: false },
-                    );
-                    send_to(&inner, &opp.team_id, ServerMsg::MatchOffer { scrim: scrim.clone() });
-                    send_to(&inner, &my_id, ServerMsg::MatchOffer { scrim });
-                } else {
-                    // 중복 큐 방지 후 대기열 진입.
-                    inner.queue.retain(|q| q.team_id != my_id);
-                    inner.queue.push(QueueEntry {
-                        team_id: my_id.clone(),
-                        game: my_game,
-                        date,
-                        time,
-                        region,
-                        target,
+                        region: region.clone(),
                     });
-                    send_to(&inner, &my_id, ServerMsg::Queued);
+                    broadcast_lists(&state, &inner);
                 }
+                schedule_demo_invite(state.clone(), my_id, my_game, date, time, region);
             }
 
-            ClientMsg::Apply { match_id } => {
-                let Some((my_id, _)) = me.clone() else { continue };
-                let mut inner = state.inner.lock().unwrap();
-                let (update, a, b) = {
-                    let Some(rec) = inner.matches.get_mut(&match_id) else {
-                        let _ = tx.send(ServerMsg::Error { message: "존재하지 않는 매칭".into() });
-                        continue;
-                    };
-                    if rec.scrim.team_a == my_id {
-                        rec.accepted_a = true;
-                    } else if rec.scrim.team_b == my_id {
-                        rec.accepted_b = true;
-                    }
-                    rec.scrim.status = if rec.accepted_a && rec.accepted_b {
-                        MatchStatus::Confirmed
-                    } else {
-                        MatchStatus::Applied
-                    };
-                    (rec.scrim.clone(), rec.scrim.team_a.clone(), rec.scrim.team_b.clone())
-                };
-                send_to(&inner, &a, ServerMsg::MatchUpdate { scrim: update.clone() });
-                send_to(&inner, &b, ServerMsg::MatchUpdate { scrim: update.clone() });
-                drop(inner);
-
-                // 확정된 매칭은 Postgres 에 영속화.
-                if update.status == MatchStatus::Confirmed {
-                    if let Some(pool) = state.pool.clone() {
-                        tokio::spawn(async move { db::persist_match(&pool, &update).await; });
-                    }
-                }
-            }
-
-            ClientMsg::Deny { match_id } => {
-                let mut inner = state.inner.lock().unwrap();
-                if let Some(mut rec) = inner.matches.remove(&match_id) {
-                    rec.scrim.status = MatchStatus::Denied;
-                    let (a, b) = (rec.scrim.team_a.clone(), rec.scrim.team_b.clone());
-                    send_to(&inner, &a, ServerMsg::MatchUpdate { scrim: rec.scrim.clone() });
-                    send_to(&inner, &b, ServerMsg::MatchUpdate { scrim: rec.scrim });
-                }
-            }
-
-            ClientMsg::Cancel => {
+            ClientMsg::StopSearch => {
                 if let Some((my_id, _)) = me.clone() {
                     let mut inner = state.inner.lock().unwrap();
-                    inner.queue.retain(|q| q.team_id != my_id);
+                    inner.pool.retain(|q| q.team_id != my_id);
+                    broadcast_lists(&state, &inner);
+                }
+            }
+
+            ClientMsg::Invite { target_team } => {
+                let Some((my_id, my_game)) = me.clone() else { continue };
+                let Some(target) = state.find_team(&target_team) else {
+                    let _ = tx.send(ServerMsg::Error { message: "알 수 없는 상대".into() });
+                    continue;
+                };
+                let mut inner = state.inner.lock().unwrap();
+                let Some((date, time)) = inner
+                    .pool
+                    .iter()
+                    .find(|q| q.team_id == my_id)
+                    .map(|q| (q.date.clone(), q.time.clone()))
+                else {
+                    drop(inner);
+                    let _ = tx.send(ServerMsg::Error { message: "먼저 스크림을 검색하세요".into() });
+                    continue;
+                };
+                let match_id = Uuid::new_v4().to_string();
+                let scrim = ScrimMatch {
+                    id: match_id.clone(),
+                    team_a: my_id.clone(),
+                    team_b: target_team.clone(),
+                    game: my_game,
+                    date,
+                    time,
+                    code: gen_code(),
+                    status: MatchStatus::Pending,
+                };
+                inner.matches.insert(match_id.clone(), MatchRec {
+                    scrim,
+                    inviter: my_id.clone(),
+                    invitee: target_team.clone(),
+                });
+                let target_live = inner.clients.contains_key(&target_team);
+                send_to(&inner, &my_id, ServerMsg::InviteSent {
+                    match_id: match_id.clone(),
+                    to: Listing::from_team(&target, !target_live),
+                });
+                if target_live {
+                    if let Some(mine) = state.find_team(&my_id) {
+                        send_to(&inner, &target_team, ServerMsg::InviteIncoming {
+                            match_id,
+                            from: Listing::from_team(&mine, false),
+                        });
+                    }
+                } else {
+                    drop(inner);
+                    schedule_demo_accept(state.clone(), match_id);
+                }
+            }
+
+            ClientMsg::Accept { match_id } => {
+                let mut inner = state.inner.lock().unwrap();
+                let scrim = confirm_and_notify(&state, &mut inner, &match_id);
+                broadcast_lists(&state, &inner);
+                drop(inner);
+                if let Some(s) = scrim {
+                    persist(&state, s);
+                }
+            }
+
+            ClientMsg::Reject { match_id } => {
+                let mut inner = state.inner.lock().unwrap();
+                if let Some(rec) = inner.matches.remove(&match_id) {
+                    send_to(&inner, &rec.inviter, ServerMsg::InviteRejected { match_id });
+                }
+            }
+
+            ClientMsg::Chat { match_id, text } => {
+                let Some((my_id, _)) = me.clone() else { continue };
+                let inner = state.inner.lock().unwrap();
+                let Some(rec) = inner.matches.get(&match_id).cloned() else { continue };
+                let other = if rec.inviter == my_id { rec.invitee.clone() } else { rec.inviter.clone() };
+                let from_name = state.find_team(&my_id).map(|t| t.name).unwrap_or_else(|| my_id.clone());
+                if inner.clients.contains_key(&other) {
+                    send_to(&inner, &other, ServerMsg::Chat {
+                        match_id: match_id.clone(),
+                        from_team: my_id.clone(),
+                        from_name,
+                        text,
+                    });
+                } else {
+                    drop(inner);
+                    schedule_demo_chat(state.clone(), match_id, other, my_id);
                 }
             }
         }
     }
 
-    // 정리: 클라이언트/대기열 제거.
     if let Some((my_id, _)) = me {
         let mut inner = state.inner.lock().unwrap();
         inner.clients.remove(&my_id);
-        inner.queue.retain(|q| q.team_id != my_id);
+        inner.pool.retain(|q| q.team_id != my_id);
+        broadcast_lists(&state, &inner);
     }
     send_task.abort();
 }
+

@@ -69,14 +69,33 @@ fn team(
         tag: tag.to_string(),
         game,
         region: region.to_string(),
+        logo: None,
         staff: staff(manager, coaches),
         roster: build_roster(id, tag, firsts, roles),
     }
 }
 
+/// team id → 로고 에셋 경로(여러 종목이 같은 조직이면 로고 공유).
+fn logo_for(id: &str) -> Option<String> {
+    let key = match id {
+        "t1-lol" | "t1-val" => "t1",
+        "geng-lol" | "geng-val" => "geng",
+        "drx-lol" | "drx-val" => "drx",
+        "kt-lol" => "kt",
+        "hle-lol" => "hle",
+        "dk-lol" => "dk",
+        "bnk-lol" => "bnk",
+        "brion-lol" => "brion",
+        "ns-lol" => "ns",
+        "dns-lol" => "dns",
+        _ => return None,
+    };
+    Some(format!("logos/{key}.webp"))
+}
+
 /// 서버 부팅 시 메모리에 적재되는 시드 팀 목록.
 pub fn seed_teams() -> Vec<Team> {
-    vec![
+    let mut teams = vec![
         // ───────── League of Legends · LCK ─────────
         team(
             "t1-lol", "T1", "T1", Game::Lol, "LCK",
@@ -108,6 +127,27 @@ pub fn seed_teams() -> Vec<Team> {
             "DK Mgmt", &["Daeny", "Hirit"],
             &["Siwoo", "Lucid", "ShowMaker", "Aiming", "BeryL"], &LOL_ROLES,
         ),
+        // 로스터 미정 팀(플레이스홀더 핸들 — 추후 실제 로스터로 교체).
+        team(
+            "bnk-lol", "BNK FEARX", "BFX", Game::Lol, "LCK",
+            "BFX Mgmt", &["Coach"],
+            &["bfxTop", "bfxJgl", "bfxMid", "bfxBot", "bfxSup"], &LOL_ROLES,
+        ),
+        team(
+            "brion-lol", "Hanjin BRION", "BRO", Game::Lol, "LCK",
+            "BRO Mgmt", &["Coach"],
+            &["broTop", "broJgl", "broMid", "broBot", "broSup"], &LOL_ROLES,
+        ),
+        team(
+            "ns-lol", "Nongshim RedForce", "NS", Game::Lol, "LCK",
+            "NS Mgmt", &["Coach"],
+            &["nsTop", "nsJgl", "nsMid", "nsBot", "nsSup"], &LOL_ROLES,
+        ),
+        team(
+            "dns-lol", "DN SOOPers", "DNS", Game::Lol, "LCK",
+            "DNS Mgmt", &["Coach"],
+            &["dnsTop", "dnsJgl", "dnsMid", "dnsBot", "dnsSup"], &LOL_ROLES,
+        ),
         // ───────── VALORANT · VCT Pacific ─────────
         team(
             "drx-val", "DRX", "DRX", Game::Valorant, "VCT Pacific",
@@ -132,15 +172,20 @@ pub fn seed_teams() -> Vec<Team> {
         // ───────── StarCraft (개인 종목, 1인 로스터) ─────────
         Team {
             id: "afr-sc".into(), name: "Afreeca Freecs".into(), tag: "AF".into(),
-            game: Game::Starcraft, region: "ASL".into(),
+            game: Game::Starcraft, region: "ASL".into(), logo: None,
             staff: staff("AF Mgmt", &["Coach"]),
             roster: vec![p("af-1-0", "Light", "Terran", Squad::First)],
         },
         Team {
             id: "sk-sc".into(), name: "SKT Legends".into(), tag: "SKL".into(),
-            game: Game::Starcraft, region: "ASL".into(),
+            game: Game::Starcraft, region: "ASL".into(), logo: None,
             staff: staff("SKL Mgmt", &["Coach"]),
             roster: vec![p("skl-1-0", "Rush", "Protoss", Squad::First)],
         },
-    ]
+    ];
+    // 종목이 같은 조직이면 로고를 공유하도록 일괄 매핑.
+    for t in teams.iter_mut() {
+        t.logo = logo_for(&t.id);
+    }
+    teams
 }

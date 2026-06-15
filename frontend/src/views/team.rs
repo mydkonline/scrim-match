@@ -2,7 +2,7 @@ use dioxus::prelude::*;
 use shared::{Squad, Team};
 
 use crate::state::AppCtx;
-use crate::views::initials;
+use crate::views::{avatar_url, initials, TeamLogo};
 
 #[component]
 pub fn TeamSetting() -> Element {
@@ -14,8 +14,13 @@ pub fn TeamSetting() -> Element {
     };
 
     rsx! {
-        h1 { class: "h-lg", "{team.name}" }
-        p { class: "muted", "{team.region} · {team.game.label()}" }
+        div { class: "team-header",
+            TeamLogo { logo: team.logo.clone(), tag: team.tag.clone(), size: 64 }
+            div {
+                h1 { class: "h-lg", "{team.name}" }
+                p { class: "muted", "{team.region} · {team.game.label()}" }
+            }
+        }
 
         div { class: "team-layout mt-xl",
             div { class: "staff-card card",
@@ -52,7 +57,7 @@ fn SquadCol(team: Team, squad: Squad) -> Element {
             h4 { "{squad.label()}" }
             for p in players.iter() {
                 div { key: "{p.id}", class: "player",
-                    div { class: "avatar", "{initials(&p.name)}" }
+                    img { class: "avatar-img", src: "{avatar_url(&p.name)}", alt: "{initials(&p.name)}" }
                     div { class: "player-meta",
                         div { class: "pname", "{p.name}" }
                         div { class: "prole", "{p.role}" }

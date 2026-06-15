@@ -54,21 +54,46 @@ pub async fn fetch_calendar() -> Vec<CalendarEntry> {
 
 fn handle_server_msg(ctx: AppCtx, msg: ServerMsg) {
     let mut status = ctx.status;
-    let mut current = ctx.current_match;
     let mut my_team = ctx.my_team;
+    let mut listings = ctx.listings;
+    let mut outgoing = ctx.outgoing;
+    let mut incoming = ctx.incoming;
+    let mut confirmed = ctx.confirmed;
+    let mut searching = ctx.searching;
+    let mut chat_log = ctx.chat_log;
+
     match msg {
         ServerMsg::Welcome { team } => {
             my_team.set(Some(team));
             status.set("실서버 연결됨".into());
         }
-        ServerMsg::Queued => status.set("상대 팀 매칭 대기 중…".into()),
-        ServerMsg::MatchOffer { scrim } => {
-            current.set(Some(scrim));
-            status.set("매칭 제안 도착!".into());
+        ServerMsg::ScrimList { listings: l } => {
+            listings.set(l);
         }
-        ServerMsg::MatchUpdate { scrim } => {
-            status.set(format!("매칭 상태: {:?}", scrim.status));
-            current.set(Some(scrim));
+        ServerMsg::InviteIncoming { match_id, from } => {
+            status.set(format!("{} 가 스크림을 신청했습니다", from.name));
+            incoming.set(Some((match_id, from)));
+        }
+        ServerMsg::InviteSent { match_id, to } => {
+            outgoing.set(Some((match_id, to)));
+        }
+        ServerMsg::InviteRejected { .. } => {
+            outgoing.set(None);
+            status.set("상대가 신청을 거절했습니다".into());
+        }
+        ServerMsg::MatchConfirmed { match_id, scrim, opponent } => {
+            searching.set(false);
+            listings.set(Vec::new());
+            outgoing.set(None);
+            incoming.set(None);
+            chat_log.set(Vec::new());
+            status.set(format!("매칭 확정! vs {}", opponent.name));
+            confirmed.set(Some((match_id, scrim, opponent)));
+        }
+        ServerMsg::Chat { from_name, text, .. } => {
+            let mut log = chat_log.read().clone();
+            log.push(crate::state::ChatMsg { mine: false, name: from_name, text });
+            chat_log.set(log);
         }
         ServerMsg::Error { message } => status.set(format!("오류: {message}")),
     }

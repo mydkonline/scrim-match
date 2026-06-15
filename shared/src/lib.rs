@@ -82,8 +82,38 @@ pub struct Team {
     pub tag: String,
     pub game: Game,
     pub region: String,
+    /// 로고 에셋 경로(예: "logos/t1.webp") 또는 없음.
+    #[serde(default)]
+    pub logo: Option<String>,
     pub staff: Staff,
     pub roster: Vec<Player>,
+}
+
+/// 매칭 리스트/초대에 쓰는 팀 요약 카드.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Listing {
+    pub team_id: String,
+    pub name: String,
+    pub tag: String,
+    pub region: String,
+    pub game: Game,
+    pub logo: Option<String>,
+    /// 데모 봇(실제 접속자가 아닌 시드 팀)인지.
+    pub demo: bool,
+}
+
+impl Listing {
+    pub fn from_team(t: &Team, demo: bool) -> Self {
+        Listing {
+            team_id: t.id.clone(),
+            name: t.name.clone(),
+            tag: t.tag.clone(),
+            region: t.region.clone(),
+            game: t.game,
+            logo: t.logo.clone(),
+            demo,
+        }
+    }
 }
 
 impl Team {
@@ -140,23 +170,23 @@ pub enum ClientMsg {
         team_id: String,
         game: Game,
     },
-    /// 같은 슬롯을 찾는 다른 팀과 페어링 요청.
-    /// - `region`: 지정 시 같은 지역 팀하고만 매칭.
-    /// - `target_team`: 지정 시 그 팀하고만 매칭(지정 스크림). 없으면 공개 매칭.
-    FindScrim {
+    /// 스크림 상대 검색 풀에 진입(슬롯 지정).
+    Search {
         date: String,
         time: String,
         #[serde(default)]
         region: Option<String>,
-        #[serde(default)]
-        target_team: Option<String>,
     },
-    /// 매칭 제안 수락.
-    Apply { match_id: String },
-    /// 매칭 제안 거절.
-    Deny { match_id: String },
-    /// 대기열 이탈.
-    Cancel,
+    /// 검색 중단(풀 이탈).
+    StopSearch,
+    /// 리스트의 특정 팀에게 스크림 신청.
+    Invite { target_team: String },
+    /// 받은 신청 수락.
+    Accept { match_id: String },
+    /// 받은 신청 거절.
+    Reject { match_id: String },
+    /// 확정된 매칭 채팅 메시지.
+    Chat { match_id: String, text: String },
 }
 
 /// 서버 → 클라이언트.
@@ -165,12 +195,27 @@ pub enum ClientMsg {
 pub enum ServerMsg {
     /// 인증 성공, 내 팀 정보 반환.
     Welcome { team: Team },
-    /// 대기열 진입함.
-    Queued,
-    /// 상대가 잡혀 매칭이 제안됨.
-    MatchOffer { scrim: ScrimMatch },
-    /// 매칭 상태 변경(수락/확정/거절).
-    MatchUpdate { scrim: ScrimMatch },
+    /// 현재 내 슬롯에서 스크림 가능한 팀 목록(검색 중 갱신).
+    ScrimList { listings: Vec<Listing> },
+    /// 누군가 나에게 스크림을 신청함.
+    InviteIncoming { match_id: String, from: Listing },
+    /// 내가 신청을 보냈고 상대 수락 대기 중.
+    InviteSent { match_id: String, to: Listing },
+    /// 내 신청이 거절됨.
+    InviteRejected { match_id: String },
+    /// 매칭 확정(양쪽에 비밀 코드 + 상대 정보 공유).
+    MatchConfirmed {
+        match_id: String,
+        scrim: ScrimMatch,
+        opponent: Listing,
+    },
+    /// 확정 매칭 채팅 수신.
+    Chat {
+        match_id: String,
+        from_team: String,
+        from_name: String,
+        text: String,
+    },
     /// 오류.
     Error { message: String },
 }
