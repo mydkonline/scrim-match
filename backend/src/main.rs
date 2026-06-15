@@ -5,6 +5,8 @@
 //!
 //! 상태는 MVP 단계라 인메모리로 관리합니다(운영 시 Postgres 등으로 교체).
 
+mod db;
+
 use std::{
     collections::HashMap,
     net::SocketAddr,
@@ -60,6 +62,8 @@ struct Inner {
 struct AppState {
     teams: Vec<Team>,
     inner: Mutex<Inner>,
+    /// Postgres 풀(없으면 인메모리 전용).
+    pool: Option<sqlx::PgPool>,
 }
 
 impl AppState {
@@ -79,9 +83,29 @@ async fn main() {
         )
         .init();
 
+    // DATABASE_URL 이 있으면 Postgres 에서 팀을 로드, 없으면 시드로 폴백.
+    let (teams, pool) = match std::env::var("DATABASE_URL").ok() {
+        Some(url) => match db::init(&url).await {
+            Ok(p) => {
+                let t = db::load_teams(&p).await;
+                tracing::info!("Postgres 연결됨 — 팀 {}개 로드", t.len());
+                (t, Some(p))
+            }
+            Err(e) => {
+                tracing::error!("Postgres 초기화 실패({e}) — 시드로 폴백");
+                (shared::seed::seed_teams(), None)
+            }
+        },
+        None => {
+            tracing::info!("DATABASE_URL 없음 — 인메모리 시드 사용");
+            (shared::seed::seed_teams(), None)
+        }
+    };
+
     let state: Shared = Arc::new(AppState {
-        teams: shared::seed::seed_teams(),
+        teams,
         inner: Mutex::new(Inner::default()),
+        pool,
     });
 
     let cors = CorsLayer::new()
@@ -130,15 +154,24 @@ async fn get_team(
         .ok_or(StatusCode::NOT_FOUND)
 }
 
-/// 데모용 캘린더. 운영에서는 확정된 ScrimMatch 로부터 생성.
-async fn calendar() -> impl IntoResponse {
-    let entries = vec![
+fn fallback_calendar() -> Vec<CalendarEntry> {
+    vec![
         CalendarEntry { date: "2026-06-15".into(), opponent: "GANDONG".into(), game: Game::Lol, result: None },
         CalendarEntry { date: "2026-06-18".into(), opponent: "DRX".into(), game: Game::Lol, result: None },
         CalendarEntry { date: "2026-06-21".into(), opponent: "Gen.G".into(), game: Game::Lol, result: Some("2-1 W".into()) },
         CalendarEntry { date: "2026-06-25".into(), opponent: "KT Rolster".into(), game: Game::Valorant, result: None },
-    ];
-    Json(entries)
+    ]
+}
+
+/// DB 연결 시 확정 매칭 기반, 없으면 데모 폴백.
+async fn calendar(State(state): State<Shared>) -> impl IntoResponse {
+    if let Some(pool) = &state.pool {
+        let cal = db::load_calendar(pool, &state.teams).await;
+        if !cal.is_empty() {
+            return Json(cal);
+        }
+    }
+    Json(fallback_calendar())
 }
 
 // ────────────────────────── WebSocket ──────────────────────────
@@ -311,7 +344,15 @@ async fn handle_socket(socket: WebSocket, state: Shared) {
                     (rec.scrim.clone(), rec.scrim.team_a.clone(), rec.scrim.team_b.clone())
                 };
                 send_to(&inner, &a, ServerMsg::MatchUpdate { scrim: update.clone() });
-                send_to(&inner, &b, ServerMsg::MatchUpdate { scrim: update });
+                send_to(&inner, &b, ServerMsg::MatchUpdate { scrim: update.clone() });
+                drop(inner);
+
+                // 확정된 매칭은 Postgres 에 영속화.
+                if update.status == MatchStatus::Confirmed {
+                    if let Some(pool) = state.pool.clone() {
+                        tokio::spawn(async move { db::persist_match(&pool, &update).await; });
+                    }
+                }
             }
 
             ClientMsg::Deny { match_id } => {
