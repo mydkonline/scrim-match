@@ -37,6 +37,7 @@ fn App() -> Element {
             div { class: "page",
                 {match screen {
                     Screen::Matching => rsx! { views::Matching {} },
+                    Screen::Messages => rsx! { views::Messages {} },
                     Screen::Team => rsx! { views::TeamSetting {} },
                     Screen::Calendar => rsx! { views::Calendar {} },
                     Screen::Login => rsx! {},

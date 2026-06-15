@@ -9,6 +9,7 @@ use shared::{ClientMsg, Game, Listing, ScrimMatch, Team};
 pub enum Screen {
     Login,
     Matching,
+    Messages,
     Team,
     Calendar,
 }
@@ -19,6 +20,23 @@ pub struct ChatMsg {
     pub mine: bool,
     pub name: String,
     pub text: String,
+}
+
+/// 수신함 항목(들어온 스크림 신청).
+#[derive(Debug, Clone, PartialEq)]
+pub struct InboxItem {
+    pub match_id: String,
+    pub from: Listing,
+}
+
+/// 확정 매칭 대화 스레드.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Thread {
+    pub match_id: String,
+    pub opponent: Listing,
+    pub scrim: ScrimMatch,
+    pub chat: Vec<ChatMsg>,
+    pub unread: u32,
 }
 
 /// 컨텍스트로 공유되는 앱 상태. 모든 필드가 Signal 이라 Copy.
@@ -34,18 +52,16 @@ pub struct AppCtx {
     pub ws_tx: Signal<Option<UnboundedSender<ClientMsg>>>,
 
     // ── 매칭 플로우 ──
-    /// 검색 중(지구본 회전).
     pub searching: Signal<bool>,
-    /// 현재 슬롯에서 스크림 가능한 팀 목록.
     pub listings: Signal<Vec<Listing>>,
     /// 내가 신청 보낸 상태: (match_id, 상대).
     pub outgoing: Signal<Option<(String, Listing)>>,
-    /// 나에게 들어온 신청: (match_id, 신청자).
-    pub incoming: Signal<Option<(String, Listing)>>,
-    /// 확정된 매칭: (match_id, scrim, 상대).
-    pub confirmed: Signal<Option<(String, ScrimMatch, Listing)>>,
-    /// 확정 매칭 채팅 로그.
-    pub chat_log: Signal<Vec<ChatMsg>>,
+    /// 수신함: 들어온 스크림 신청들.
+    pub inbox: Signal<Vec<InboxItem>>,
+    /// 확정 매칭 대화 스레드들.
+    pub threads: Signal<Vec<Thread>>,
+    /// 메시지 대시보드에서 열려 있는 스레드 match_id.
+    pub active: Signal<Option<String>>,
 }
 
 impl AppCtx {
@@ -62,13 +78,12 @@ impl AppCtx {
             searching: use_signal(|| false),
             listings: use_signal(Vec::new),
             outgoing: use_signal(|| Option::<(String, Listing)>::None),
-            incoming: use_signal(|| Option::<(String, Listing)>::None),
-            confirmed: use_signal(|| Option::<(String, ScrimMatch, Listing)>::None),
-            chat_log: use_signal(Vec::new),
+            inbox: use_signal(Vec::new),
+            threads: use_signal(Vec::new),
+            active: use_signal(|| Option::<String>::None),
         }
     }
 
-    /// WebSocket 으로 클라이언트 메시지를 보낸다(연결돼 있을 때만).
     pub fn send(self, msg: ClientMsg) {
         if let Some(tx) = self.ws_tx.read().as_ref() {
             let _ = tx.unbounded_send(msg);
@@ -80,19 +95,20 @@ impl AppCtx {
         s.set(screen);
     }
 
-    /// 매칭 관련 상태를 모두 초기화(처음으로).
-    pub fn reset_matching(self) {
+    /// 검색 관련 상태만 초기화(수신함·대화는 유지).
+    pub fn reset_search(self) {
         let mut s = self.searching;
         s.set(false);
         let mut l = self.listings;
         l.set(Vec::new());
         let mut o = self.outgoing;
         o.set(None);
-        let mut i = self.incoming;
-        i.set(None);
-        let mut c = self.confirmed;
-        c.set(None);
-        let mut ch = self.chat_log;
-        ch.set(Vec::new());
+    }
+
+    /// 수신함 + 열린 대화의 미읽음 합계(네비 배지).
+    pub fn unread_count(self) -> usize {
+        let inbox = self.inbox.read().len();
+        let threads: u32 = self.threads.read().iter().map(|t| t.unread).sum();
+        inbox + threads as usize
     }
 }

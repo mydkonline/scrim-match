@@ -8,6 +8,7 @@ pub fn NavBar() -> Element {
     let screen = *ctx.screen.read();
     let my = ctx.my_team.read().clone();
     let online = *ctx.online.read();
+    let unread = ctx.unread_count();
 
     let (pill_cls, pill_txt) = if online {
         ("status-pill online", "● online")
@@ -20,6 +21,7 @@ pub fn NavBar() -> Element {
             div { class: "brand", span { class: "dot" } "Scrim.GG" }
             div { class: "nav-links",
                 NavBtn { label: "Matching", target: Screen::Matching, current: screen }
+                NavBtn { label: "Messages", target: Screen::Messages, current: screen, badge: unread }
                 NavBtn { label: "Team", target: Screen::Team, current: screen }
                 NavBtn { label: "Calendar", target: Screen::Calendar, current: screen }
             }
@@ -38,7 +40,7 @@ pub fn NavBar() -> Element {
 }
 
 #[component]
-fn NavBtn(label: String, target: Screen, current: Screen) -> Element {
+fn NavBtn(label: String, target: Screen, current: Screen, #[props(default = 0)] badge: usize) -> Element {
     let ctx = use_context::<AppCtx>();
     let cls = if target == current { "active" } else { "" };
     rsx! {
@@ -46,6 +48,7 @@ fn NavBtn(label: String, target: Screen, current: Screen) -> Element {
             class: "{cls}",
             onclick: move |_| ctx.goto(target),
             "{label}"
+            if badge > 0 { span { class: "nav-badge", "{badge}" } }
         }
     }
 }

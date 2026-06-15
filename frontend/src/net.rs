@@ -53,14 +53,15 @@ pub async fn fetch_calendar() -> Vec<CalendarEntry> {
 }
 
 fn handle_server_msg(ctx: AppCtx, msg: ServerMsg) {
+    use crate::state::{ChatMsg, InboxItem, Screen, Thread};
     let mut status = ctx.status;
     let mut my_team = ctx.my_team;
     let mut listings = ctx.listings;
     let mut outgoing = ctx.outgoing;
-    let mut incoming = ctx.incoming;
-    let mut confirmed = ctx.confirmed;
+    let mut inbox = ctx.inbox;
+    let mut threads = ctx.threads;
+    let mut active = ctx.active;
     let mut searching = ctx.searching;
-    let mut chat_log = ctx.chat_log;
 
     match msg {
         ServerMsg::Welcome { team } => {
@@ -71,8 +72,12 @@ fn handle_server_msg(ctx: AppCtx, msg: ServerMsg) {
             listings.set(l);
         }
         ServerMsg::InviteIncoming { match_id, from } => {
-            status.set(format!("{} 가 스크림을 신청했습니다", from.name));
-            incoming.set(Some((match_id, from)));
+            let mut list = inbox.read().clone();
+            if !list.iter().any(|i| i.match_id == match_id) {
+                list.push(InboxItem { match_id, from: from.clone() });
+                inbox.set(list);
+            }
+            status.set(format!("📩 {} 가 스크림을 신청했습니다", from.name));
         }
         ServerMsg::InviteSent { match_id, to } => {
             outgoing.set(Some((match_id, to)));
@@ -85,15 +90,30 @@ fn handle_server_msg(ctx: AppCtx, msg: ServerMsg) {
             searching.set(false);
             listings.set(Vec::new());
             outgoing.set(None);
-            incoming.set(None);
-            chat_log.set(Vec::new());
-            status.set(format!("매칭 확정! vs {}", opponent.name));
-            confirmed.set(Some((match_id, scrim, opponent)));
+            // 수신함에서 제거
+            let remaining: Vec<_> = inbox.read().clone().into_iter().filter(|i| i.match_id != match_id).collect();
+            inbox.set(remaining);
+            // 스레드 추가(중복 방지)
+            let mut th = threads.read().clone();
+            if !th.iter().any(|t| t.match_id == match_id) {
+                th.push(Thread { match_id: match_id.clone(), opponent: opponent.clone(), scrim, chat: Vec::new(), unread: 0 });
+                threads.set(th);
+            }
+            active.set(Some(match_id));
+            status.set(format!("✅ 매칭 확정! vs {}", opponent.name));
+            let mut s = ctx.screen;
+            s.set(Screen::Messages);
         }
-        ServerMsg::Chat { from_name, text, .. } => {
-            let mut log = chat_log.read().clone();
-            log.push(crate::state::ChatMsg { mine: false, name: from_name, text });
-            chat_log.set(log);
+        ServerMsg::Chat { match_id, from_name, text, .. } => {
+            let active_id = ctx.active.read().clone();
+            let mut th = threads.read().clone();
+            if let Some(t) = th.iter_mut().find(|t| t.match_id == match_id) {
+                t.chat.push(ChatMsg { mine: false, name: from_name, text });
+                if active_id.as_deref() != Some(match_id.as_str()) {
+                    t.unread += 1;
+                }
+                threads.set(th);
+            }
         }
         ServerMsg::Error { message } => status.set(format!("오류: {message}")),
     }

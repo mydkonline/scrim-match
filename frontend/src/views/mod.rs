@@ -1,12 +1,14 @@
 mod calendar;
 mod login;
 mod matching;
+mod messages;
 mod nav;
 mod team;
 
 pub use calendar::Calendar;
 pub use login::Login;
 pub use matching::{Matching, TeamLogo};
+pub use messages::Messages;
 pub use nav::NavBar;
 pub use team::TeamSetting;
 
