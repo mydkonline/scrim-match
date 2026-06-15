@@ -51,6 +51,32 @@
 
 * { box-sizing: border-box; }
 
+/* ============================================================
+   Professional polish (typeui 아이디어 참조 — Clean/Dashboard)
+   ============================================================ */
+:root {
+  --shadow-sm: 0 1px 2px rgba(16,24,40,0.05);
+  --shadow-md: 0 4px 12px rgba(16,24,40,0.07);
+  --shadow-lg: 0 12px 32px rgba(16,24,40,0.10);
+  --ring: 0 0 0 3px rgba(62,207,142,0.20);
+}
+body { background:
+  radial-gradient(1200px 500px at 100% -10%, rgba(62,207,142,0.06), transparent 60%),
+  radial-gradient(900px 400px at -10% 0%, rgba(37,99,235,0.05), transparent 55%),
+  var(--canvas);
+}
+.nav { backdrop-filter: saturate(1.1) blur(8px); background: rgba(255,255,255,0.85); border-bottom: 1px solid var(--hairline-cool); }
+.card { box-shadow: var(--shadow-sm); }
+.card:hover { box-shadow: var(--shadow-md); }
+.login-card { box-shadow: var(--shadow-lg); border-radius: var(--r-xl); }
+.btn-primary { box-shadow: 0 1px 2px rgba(36,180,126,0.25); }
+.btn-primary:hover { box-shadow: 0 2px 8px rgba(36,180,126,0.3); }
+.input:focus, .select:focus, .text-input:focus { box-shadow: var(--ring); }
+.display, .h-lg { letter-spacing: -0.8px; }
+.listing-card { box-shadow: var(--shadow-sm); }
+.msg-dashboard { box-shadow: var(--shadow-md); }
+.scrim-code { box-shadow: var(--shadow-md); }
+
 html, body {
   margin: 0;
   padding: 0;
