@@ -448,6 +448,20 @@ async fn handle_socket(socket: WebSocket, state: Shared) {
                 me = Some((team_id.clone(), game));
                 let _ = tx.send(ServerMsg::Welcome { team });
                 tracing::info!("team {team_id} authenticated for {:?}", game);
+
+                // 접속 시: 나에게 온 대기 신청(메시지 큐)을 전달 — 브라우저를 꺼놨어도 받음.
+                {
+                    let inner = state.inner.lock().unwrap();
+                    let mine: Vec<Pending> = inner.pending.iter().filter(|p| p.to == team_id).cloned().collect();
+                    for p in mine {
+                        if let Some(t) = state.find_team(&p.from) {
+                            let _ = tx.send(ServerMsg::InviteIncoming {
+                                match_id: p.code.clone(),
+                                from: Listing::from_team(&t, !inner.clients.contains_key(&p.from)),
+                            });
+                        }
+                    }
+                }
             }
 
             ClientMsg::Search { date, time, region } => {
@@ -496,9 +510,18 @@ async fn handle_socket(socket: WebSocket, state: Shared) {
                 });
                 let target_live = inner.clients.contains_key(&target_team);
                 send_to(&inner, &my_id, ServerMsg::Applied {
-                    code,
+                    code: code.clone(),
                     to: Listing::from_team(&target, !target_live),
                 });
+                // 상대가 접속 중이면 즉시 신청 푸시(브라우저/터미널 모두 수신).
+                if target_live {
+                    if let Some(t) = state.find_team(&my_id) {
+                        send_to(&inner, &target_team, ServerMsg::InviteIncoming {
+                            match_id: code,
+                            from: Listing::from_team(&t, false),
+                        });
+                    }
+                }
             }
 
             ClientMsg::AcceptCode { code } => {

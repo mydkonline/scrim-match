@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["shared", "backend", "frontend"]
+members = ["shared", "backend", "frontend", "cli"]
 
 # 주의: frontend 는 wasm32 전용 의존성을 사용하므로
 #   - 백엔드:  cargo build -p backend
