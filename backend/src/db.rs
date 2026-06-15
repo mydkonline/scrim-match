@@ -76,22 +76,25 @@ async fn seed_if_empty(pool: &PgPool) -> Result<(), sqlx::Error> {
     if count > 0 {
         return Ok(());
     }
+    // 원자적 시드: 중간 실패 시 전체 롤백(부분 적재 방지).
+    let mut tx = pool.begin().await?;
     for t in shared::seed::seed_teams() {
         sqlx::query("INSERT INTO teams(id,name,tag,game,region,manager) VALUES($1,$2,$3,$4,$5,$6)")
             .bind(&t.id).bind(&t.name).bind(&t.tag)
             .bind(game_to_str(t.game)).bind(&t.region).bind(&t.staff.manager)
-            .execute(pool).await?;
+            .execute(&mut *tx).await?;
         for (i, c) in t.staff.coaches.iter().enumerate() {
             sqlx::query("INSERT INTO coaches(team_id,idx,name) VALUES($1,$2,$3)")
                 .bind(&t.id).bind(i as i32).bind(c)
-                .execute(pool).await?;
+                .execute(&mut *tx).await?;
         }
         for p in &t.roster {
             sqlx::query("INSERT INTO players(id,team_id,name,role,squad) VALUES($1,$2,$3,$4,$5)")
                 .bind(&p.id).bind(&t.id).bind(&p.name).bind(&p.role).bind(squad_to_str(p.squad))
-                .execute(pool).await?;
+                .execute(&mut *tx).await?;
         }
     }
+    tx.commit().await?;
     tracing::info!("seeded teams into Postgres");
     Ok(())
 }

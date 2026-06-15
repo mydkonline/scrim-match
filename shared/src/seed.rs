@@ -24,25 +24,27 @@ const LOL_ROLES: [&str; 5] = ["Top", "Jungle", "Mid", "ADC", "Support"];
 const VAL_ROLES: [&str; 5] = ["Duelist", "Initiator", "Controller", "Sentinel", "Flex"];
 
 /// 1군 5인 + 2군 2인 + 아카데미 3인 형태로 로스터를 채운다.
-fn build_roster(prefix: &str, firsts: &[&str], roles: &[&str]) -> Vec<Player> {
+/// - `id_prefix`: player id 용(팀마다 유니크해야 함, 예: "drx-lol").
+/// - `tag`: 표시 이름 접두(예: "DRX").
+fn build_roster(id_prefix: &str, tag: &str, firsts: &[&str], roles: &[&str]) -> Vec<Player> {
     let mut roster = Vec::new();
     for (i, name) in firsts.iter().enumerate() {
         let role = roles.get(i).copied().unwrap_or("Flex");
-        roster.push(p(&format!("{prefix}-1-{i}"), name, role, Squad::First));
+        roster.push(p(&format!("{id_prefix}-1-{i}"), name, role, Squad::First));
     }
     // 데모용 2군 / 아카데미 자동 생성
     for i in 0..2 {
         roster.push(p(
-            &format!("{prefix}-2-{i}"),
-            &format!("{prefix}_Sub{}", i + 1),
+            &format!("{id_prefix}-2-{i}"),
+            &format!("{tag}_Sub{}", i + 1),
             roles.get(i).copied().unwrap_or("Flex"),
             Squad::Second,
         ));
     }
     for i in 0..3 {
         roster.push(p(
-            &format!("{prefix}-a-{i}"),
-            &format!("{prefix}_Academy{}", i + 1),
+            &format!("{id_prefix}-a-{i}"),
+            &format!("{tag}_Academy{}", i + 1),
             roles.get(i).copied().unwrap_or("Flex"),
             Squad::Academy,
         ));
@@ -68,7 +70,7 @@ fn team(
         game,
         region: region.to_string(),
         staff: staff(manager, coaches),
-        roster: build_roster(tag, firsts, roles),
+        roster: build_roster(id, tag, firsts, roles),
     }
 }
 
