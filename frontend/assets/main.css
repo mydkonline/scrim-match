@@ -371,6 +371,38 @@ input, select { font-family: var(--font); }
 .chat-input { display: flex; gap: 8px; padding: 12px; border-top: 1px solid var(--hairline-cool); }
 .chat-input .input { flex: 1; }
 
+/* ---------------- Meeting room (cam) ---------------- */
+.meeting-overlay {
+  position: fixed; inset: 0; z-index: 100; background: #0e0e10; color: #fff;
+  display: flex; flex-direction: column; animation: toast-in 0.2s ease;
+}
+.meeting-head { display: flex; align-items: center; justify-content: space-between; padding: 16px 24px; border-bottom: 1px solid #2a2a2e; }
+.meeting-title { font-weight: 600; font-size: 16px; }
+.meeting-grid {
+  flex: 1; display: grid; gap: 14px; padding: 24px;
+  grid-template-columns: repeat(2, 1fr); grid-auto-rows: 1fr; align-content: center;
+  max-width: 1000px; margin: 0 auto; width: 100%;
+}
+.cam-tile {
+  position: relative; background: #1a1a1d; border-radius: var(--r-lg); overflow: hidden;
+  aspect-ratio: 16/10; display: grid; place-items: center; border: 1px solid #2a2a2e;
+}
+.cam-tile video { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); background: #000; }
+.cam-tile.remote { background: radial-gradient(circle at 50% 40%, #232327, #161618); }
+.cam-face { opacity: 0.9; filter: grayscale(0.1); }
+.cam-label { position: absolute; left: 10px; bottom: 10px; font-size: 12px; background: rgba(0,0,0,0.55); padding: 3px 9px; border-radius: var(--r-full); }
+.cam-live { color: #22c55e; font-weight: 700; margin-left: 4px; }
+.cam-hint { position: absolute; top: 10px; left: 10px; font-size: 11px; color: #fca5a5; }
+.meeting-controls { display: flex; gap: 12px; justify-content: center; padding: 18px; border-top: 1px solid #2a2a2e; }
+.mctrl {
+  width: 52px; height: 52px; border-radius: var(--r-full); border: none; background: #2a2a2e; color: #fff;
+  font-size: 20px; cursor: pointer; transition: background 0.12s ease;
+}
+.mctrl:hover { background: #3a3a3e; }
+.mctrl.leave { background: #e5484d; }
+.mctrl.leave:hover { background: #c93b40; }
+@media (max-width: 700px) { .meeting-grid { grid-template-columns: 1fr; } }
+
 /* ---------------- Inbox banner / nav badge ---------------- */
 .inbox-banner {
   display: flex; align-items: center; justify-content: space-between; gap: var(--s-md);

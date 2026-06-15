@@ -25,9 +25,34 @@ fn hash(s: &str) -> u32 {
     h
 }
 
-/// 로컬 LoL 프로필 아이콘(av0..av39)으로 결정적 아바타.
+/// 실제 프로 선수 사진이 있는 파일 목록(이름키.확장자).
+const PLAYER_PHOTOS: &[&str] = &[
+    "aiming.jpg","aria.jpg","bdd.jpg","beryl.jpg","bin.jpg","blaber.jpg","brokenblade.jpg","busio.jpg",
+    "bwipo.jpg","canyon.jpeg","caps.jpg","cariok.jpeg","chovy.jpg","crisp.jpg","cuzz.jpg","delight.jpg",
+    "deokdam.jpg","doggo.jpg","doran.jpg","elk.jpg","faker.jpg","gumayusi.jpeg","hanssama.jpg","harp.jpg",
+    "hongq.jpeg","humanoid.jpg","inspired.jpg","jun.jpg","kaiwing.jpeg","kiin.jpg","knight.jpg","kuri.jpeg",
+    "kyeahoo.jpg","lehends.jpg","lucid.jpeg","massu.jpg","mikyx.jpg","noah.jpg","on.jpg","oner.jpg",
+    "oscarinin.jpg","paduck.jpg","peanut.jpg","perfect.jpg","peyz.jpeg","pleata.jpg","quad.jpg","razork.jpg",
+    "redbert.jpg","rest.jpg","rich.jpg","roamer.jpg","robo.jpeg","route.jpg","showmaker.jpeg","siwoo.jpeg",
+    "steal.jpg","tarzan.jpg","tatu.jpeg","thanatos.jpg","theshy.jpg","tinowns.jpeg","titan.jpg","viper.jpg",
+    "vulcan.jpg","wei.jpg","wizer.jpg","xiaohu.jpg","yike.jpg","zeka.jpg","zeus.jpg","zven.jpg",
+];
+
+fn sanitize_key(name: &str) -> String {
+    name.chars().filter(|c| c.is_ascii_alphanumeric()).collect::<String>().to_lowercase()
+}
+
+/// 로컬 LoL 프로필 아이콘(av0..av39) 폴백.
 const AVATAR_COUNT: u32 = 40;
+
+/// 실제 프로 선수 사진이 있으면 그 사진을, 없으면 프로필 아이콘을 반환.
 pub fn avatar_url(name: &str) -> String {
+    let key = sanitize_key(name);
+    for f in PLAYER_PHOTOS {
+        if f.split('.').next() == Some(key.as_str()) {
+            return format!("players/{f}");
+        }
+    }
     format!("profile-icons/av{}.png", hash(name) % AVATAR_COUNT)
 }
 

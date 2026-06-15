@@ -357,13 +357,18 @@ fn InvitePane(match_id: String, from: shared::Listing, sel_inbox: Signal<Option<
     }
 }
 
+const CAM_START: &str = "navigator.mediaDevices.getUserMedia({video:true,audio:true}).then(s=>{const v=document.getElementById('localcam');if(v){v.srcObject=s;v.play&&v.play();}window.__cam=s;}).catch(()=>{const t=document.getElementById('camhint');if(t)t.textContent='카메라 권한이 필요합니다';});";
+const CAM_STOP: &str = "try{if(window.__cam){window.__cam.getTracks().forEach(t=>t.stop());window.__cam=null;}}catch(e){}";
+
 #[component]
 fn ChatPane(thread: crate::state::Thread) -> Element {
     let ctx = use_context::<AppCtx>();
     let my_team = ctx.my_team.read().clone();
     let my_name = my_team.as_ref().map(|t| t.name.clone()).unwrap_or_default();
     let mut draft = use_signal(String::new);
+    let mut in_meeting = use_signal(|| false);
     let mid = thread.match_id.clone();
+    let opp = thread.opponent.clone();
 
     let send = move |mid: String, my_name: String, draft: &mut Signal<String>| {
         let text = draft.read().trim().to_string();
@@ -399,9 +404,14 @@ fn ChatPane(thread: crate::state::Thread) -> Element {
     rsx! {
         div { class: "conv-head",
             TeamLogo { logo: thread.opponent.logo.clone(), tag: thread.opponent.tag.clone(), size: 44 }
-            div {
+            div { style: "flex:1;",
                 div { class: "conv-name", "{thread.opponent.name}" }
                 div { class: "conv-sub", "{thread.squad_label} · {thread.scrim.date} {thread.scrim.time} · CODE {thread.scrim.code}" }
+            }
+            button {
+                class: "btn btn-primary",
+                onclick: move |_| in_meeting.set(true),
+                "🎥 미팅룸"
             }
         }
         div { class: "chat-log conv-log",
@@ -439,6 +449,53 @@ fn ChatPane(thread: crate::state::Thread) -> Element {
                     move |_| send(mid.clone(), my_name.clone(), &mut draft)
                 },
                 "전송"
+            }
+        }
+
+        // ───── 캠 미팅룸 ─────
+        if *in_meeting.read() {
+            div { class: "meeting-overlay",
+                div { class: "meeting-head",
+                    div { class: "meeting-title", "🎥 스크림 미팅룸 · {opp.name}" }
+                    button {
+                        class: "btn btn-danger",
+                        onclick: move |_| { dioxus::document::eval(CAM_STOP); in_meeting.set(false); },
+                        "🚪 나가기"
+                    }
+                }
+                div { class: "meeting-grid",
+                    // 내 캠(실제 웹캠)
+                    div { class: "cam-tile",
+                        video {
+                            id: "localcam",
+                            autoplay: true,
+                            muted: true,
+                            "playsinline": "true",
+                            onmounted: move |_| { dioxus::document::eval(CAM_START); },
+                        }
+                        div { class: "cam-label", "나 ({my_name}) " span { class: "cam-live", "● LIVE" } }
+                        div { id: "camhint", class: "cam-hint" }
+                    }
+                    // 상대 팀 타일(데모 플레이스홀더)
+                    for i in 0..3 {
+                        div { key: "{i}", class: "cam-tile remote",
+                            div { class: "cam-face",
+                                TeamLogo { logo: opp.logo.clone(), tag: opp.tag.clone(), size: 72 }
+                            }
+                            div { class: "cam-label", "{opp.name} #{i + 1}" }
+                        }
+                    }
+                }
+                div { class: "meeting-controls",
+                    button { class: "mctrl", "🎤" }
+                    button { class: "mctrl", "📷" }
+                    button { class: "mctrl", "🖥️" }
+                    button {
+                        class: "mctrl leave",
+                        onclick: move |_| { dioxus::document::eval(CAM_STOP); in_meeting.set(false); },
+                        "🔴"
+                    }
+                }
             }
         }
     }
