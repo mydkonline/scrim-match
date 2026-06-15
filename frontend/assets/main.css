@@ -294,7 +294,8 @@ input, select { font-family: var(--font); }
 /* ---------------- Logos & avatars ---------------- */
 .team-logo { border-radius: var(--r-md); object-fit: contain; background: var(--canvas-soft); border: 1px solid var(--hairline-cool); flex-shrink: 0; }
 .team-logo.fallback { display: grid; place-items: center; font-weight: 700; color: var(--ink); }
-.avatar-img { width: 44px; height: 44px; border-radius: var(--r-full); background: var(--canvas-soft); border: 1px solid var(--hairline-cool); flex-shrink: 0; }
+.avatar-img { width: 44px; height: 44px; border-radius: var(--r-full); background: var(--canvas-soft); border: 1px solid var(--hairline-cool); flex-shrink: 0; object-fit: cover; }
+.squad-col .player .avatar-img { width: 56px; height: 56px; }
 .team-header { display: flex; align-items: center; gap: var(--s-lg); }
 
 /* ---------------- Squad pick ---------------- */
