@@ -137,7 +137,12 @@ input, select { font-family: var(--font); }
 .card {
   background: var(--canvas); border: 1px solid var(--hairline);
   border-radius: var(--r-lg); padding: var(--s-xxl); box-shadow: var(--e1);
+  transition: box-shadow 0.15s ease, border-color 0.15s ease;
 }
+.btn { transition: background 0.12s ease, border-color 0.12s ease, transform 0.08s ease; }
+.btn:active { transform: translateY(1px); }
+.avatar { transition: border-color 0.15s ease, transform 0.12s ease; }
+.player:hover .avatar { border-color: var(--primary); }
 .card-dark { background: var(--canvas-night); color: var(--on-dark); border: none; }
 
 /* ---------------- Login ---------------- */
@@ -238,10 +243,18 @@ input, select { font-family: var(--font); }
 
 /* ---------------- misc ---------------- */
 .toast {
-  position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+  position: fixed; bottom: 24px; left: 50%;
   background: var(--canvas-night); color: var(--on-dark); padding: 10px 18px;
   border-radius: var(--r-md); font-size: 13px; box-shadow: var(--e2); z-index: 50;
+  animation: toast-in 0.22s ease both;
 }
+@keyframes toast-in {
+  from { opacity: 0; transform: translate(-50%, 8px); }
+  to   { opacity: 1; transform: translate(-50%, 0); }
+}
+.scrim-code { animation: toast-in 0.25s ease; }
+.confirm-box { animation: pop 0.3s cubic-bezier(0.2, 0.8, 0.3, 1.2); }
+@keyframes pop { from { opacity: 0; transform: scale(0.95); } to { opacity: 1; transform: scale(1); } }
 .row-gap { display: flex; gap: var(--s-md); align-items: center; }
 .mt-xl { margin-top: var(--s-xl); }
 .center { text-align: center; }

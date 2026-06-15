@@ -37,6 +37,7 @@ pub fn Matching() -> Element {
 
     let mut date = use_signal(|| "2026-06-15".to_string());
     let mut time = use_signal(|| "18:00".to_string());
+    let mut same_region = use_signal(|| false);
 
     let my_id = my_team.as_ref().map(|m| m.id.clone());
     let opp_teams: Vec<Team> = teams
@@ -93,6 +94,14 @@ pub fn Matching() -> Element {
                                 oninput: move |e| time.set(e.value()) }
                         }
                     }
+                    label { class: "row-gap", style: "margin-top:10px;font-size:13px;color:var(--ink-secondary);",
+                        input {
+                            r#type: "checkbox",
+                            checked: "{same_region}",
+                            onchange: move |e| same_region.set(e.checked()),
+                        }
+                        "같은 지역(리그) 팀만 매칭"
+                    }
                     button {
                         class: "btn btn-primary btn-block",
                         style: "margin-top:12px;",
@@ -102,7 +111,18 @@ pub fn Matching() -> Element {
                             let op = opponent.clone();
                             move |_| {
                                 if online {
-                                    ctx.send(ClientMsg::FindScrim { date: date.read().clone(), time: time.read().clone() });
+                                    let region = if *same_region.read() {
+                                        me.as_ref().map(|t| t.region.clone())
+                                    } else {
+                                        None
+                                    };
+                                    let target_team = op.as_ref().map(|t| t.id.clone());
+                                    ctx.send(ClientMsg::FindScrim {
+                                        date: date.read().clone(),
+                                        time: time.read().clone(),
+                                        region,
+                                        target_team,
+                                    });
                                 } else if let (Some(me), Some(op)) = (me.clone(), op.clone()) {
                                     let scrim = mock_match(&me, &op, game, &date.read(), &time.read());
                                     let mut cm = ctx.current_match;

@@ -59,6 +59,22 @@ pub fn Login() -> Element {
                     }
                 }
 
+                {
+                    let tid = selected_team.read().clone();
+                    if tid.is_empty() {
+                        rsx! {}
+                    } else {
+                        rsx! {
+                            button {
+                                class: "btn btn-outline btn-block",
+                                style: "margin-bottom:8px;",
+                                onclick: move |_| serial.set(shared::serial_for(&tid)),
+                                "🔑 데모 시리얼 코드 자동 입력"
+                            }
+                        }
+                    }
+                }
+
                 button {
                     class: "btn btn-primary btn-block mt-xl",
                     disabled: !can_connect,

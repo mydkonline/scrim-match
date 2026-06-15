@@ -36,6 +36,10 @@ struct QueueEntry {
     game: Game,
     date: String,
     time: String,
+    /// 같은 지역만 원할 때의 필터.
+    region: Option<String>,
+    /// 지정 스크림: 이 팀하고만 매칭.
+    target: Option<String>,
 }
 
 /// 진행 중인 매칭 레코드. 양쪽 수락 여부를 추적.
@@ -195,9 +199,9 @@ async fn handle_socket(socket: WebSocket, state: Shared) {
 
         match client_msg {
             ClientMsg::Hello { serial, team_id, game } => {
-                // 비밀 보장: 시리얼 코드 게이트(MVP는 4자 이상이면 통과).
-                if serial.trim().len() < 4 {
-                    let _ = tx.send(ServerMsg::Error { message: "유효하지 않은 시리얼 코드".into() });
+                // 비밀 보장: 시리얼 코드가 해당 팀의 공식 코드와 일치해야 접속 가능.
+                if serial.trim() != shared::serial_for(&team_id) {
+                    let _ = tx.send(ServerMsg::Error { message: "시리얼 코드가 팀과 일치하지 않습니다".into() });
                     continue;
                 }
                 let Some(team) = state.find_team(&team_id) else {
@@ -213,16 +217,44 @@ async fn handle_socket(socket: WebSocket, state: Shared) {
                 tracing::info!("team {team_id} authenticated for {:?}", game);
             }
 
-            ClientMsg::FindScrim { date, time } => {
+            ClientMsg::FindScrim { date, time, region, target_team: target } => {
                 let Some((my_id, my_game)) = me.clone() else {
                     let _ = tx.send(ServerMsg::Error { message: "먼저 Hello 로 인증하세요".into() });
                     continue;
                 };
+                let my_region = state.find_team(&my_id).map(|t| t.region);
                 let mut inner = state.inner.lock().unwrap();
 
-                // 같은 슬롯을 찾는 다른 팀이 대기열에 있나?
+                // 같은 슬롯 + 필터 조건을 만족하는 다른 팀이 대기열에 있나?
                 let opponent_pos = inner.queue.iter().position(|q| {
-                    q.game == my_game && q.date == date && q.time == time && q.team_id != my_id
+                    if q.game != my_game || q.date != date || q.time != time || q.team_id == my_id {
+                        return false;
+                    }
+                    // 지정 스크림: 내 target 이 있으면 상대가 그 팀이어야 하고,
+                    // 상대의 target 이 있으면 그게 나여야 한다.
+                    if let Some(t) = &target {
+                        if &q.team_id != t {
+                            return false;
+                        }
+                    }
+                    if let Some(t) = &q.target {
+                        if t != &my_id {
+                            return false;
+                        }
+                    }
+                    // 지역 필터: 양쪽 중 하나라도 region 을 걸면 상대 지역과 일치해야 한다.
+                    let opp_region = state.find_team(&q.team_id).map(|t| t.region);
+                    if let Some(r) = &region {
+                        if opp_region.as_deref() != Some(r.as_str()) {
+                            return false;
+                        }
+                    }
+                    if let Some(r) = &q.region {
+                        if my_region.as_deref() != Some(r.as_str()) {
+                            return false;
+                        }
+                    }
+                    true
                 });
 
                 if let Some(pos) = opponent_pos {
@@ -246,7 +278,14 @@ async fn handle_socket(socket: WebSocket, state: Shared) {
                 } else {
                     // 중복 큐 방지 후 대기열 진입.
                     inner.queue.retain(|q| q.team_id != my_id);
-                    inner.queue.push(QueueEntry { team_id: my_id.clone(), game: my_game, date, time });
+                    inner.queue.push(QueueEntry {
+                        team_id: my_id.clone(),
+                        game: my_game,
+                        date,
+                        time,
+                        region,
+                        target,
+                    });
                     send_to(&inner, &my_id, ServerMsg::Queued);
                 }
             }

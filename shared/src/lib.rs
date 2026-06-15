@@ -4,6 +4,20 @@ use serde::{Deserialize, Serialize};
 
 pub mod seed;
 
+/// 팀별 공식 시리얼 코드(결정적 FNV-1a 해시).
+///
+/// 비밀 보장: 이 코드를 아는 사람만 해당 팀으로 접속 가능.
+/// 운영에서는 발급/회수 가능한 비밀로 교체하고 이 함수는 데모/마이그레이션용으로만 사용한다.
+pub fn serial_for(team_id: &str) -> String {
+    let mut h: u32 = 2166136261;
+    for b in team_id.bytes() {
+        h ^= b as u32;
+        h = h.wrapping_mul(16777619);
+    }
+    let prefix = team_id.split('-').next().unwrap_or("TEAM").to_uppercase();
+    format!("{prefix}-{:04}", h % 10000)
+}
+
 /// 지원 종목.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Game {
@@ -127,7 +141,16 @@ pub enum ClientMsg {
         game: Game,
     },
     /// 같은 슬롯을 찾는 다른 팀과 페어링 요청.
-    FindScrim { date: String, time: String },
+    /// - `region`: 지정 시 같은 지역 팀하고만 매칭.
+    /// - `target_team`: 지정 시 그 팀하고만 매칭(지정 스크림). 없으면 공개 매칭.
+    FindScrim {
+        date: String,
+        time: String,
+        #[serde(default)]
+        region: Option<String>,
+        #[serde(default)]
+        target_team: Option<String>,
+    },
     /// 매칭 제안 수락.
     Apply { match_id: String },
     /// 매칭 제안 거절.

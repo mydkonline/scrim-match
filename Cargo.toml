@@ -15,3 +15,8 @@ license = "MIT"
 [workspace.dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+
+# WASM 번들 크기 최적화(프론트 릴리스 빌드에 적용).
+[profile.release]
+opt-level = "s"
+lto = true
